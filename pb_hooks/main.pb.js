@@ -28,7 +28,7 @@ function stRequest(baseUrl, apiKey, path) {
     url: `${baseUrl}${path}`,
     method: "GET",
     headers: { "X-API-Key": apiKey },
-    timeout: 25,
+    timeout: 12,
   });
 }
 
@@ -83,8 +83,9 @@ function folderTypeLabel(type) {
 
 function enrichFolderSharedWith(folder, deviceNames, byDevice) {
   const sharedWith = [];
-  for (let i = 0; i < folder.devices.length; i++) {
-    const devNorm = folder.devices[i];
+  const devices = folder.devices || [];
+  for (let i = 0; i < devices.length; i++) {
+    const devNorm = devices[i];
     const peer = byDevice[devNorm];
     sharedWith.push({
       deviceId: devNorm,
@@ -146,16 +147,17 @@ routerAdd("POST", "/api/syncms/test-connection", (c) => {
 });
 
 function listAllInstances() {
-  const out = [];
-  let offset = 0;
-  for (;;) {
-    const chunk = $app.findRecordsByFilter("instances", "", "name", 200, offset);
-    if (!chunk || chunk.length === 0) break;
-    for (let i = 0; i < chunk.length; i++) out.push(chunk[i]);
-    if (chunk.length < 200) break;
-    offset += chunk.length;
+  try {
+    const all = $app.findAllRecords("instances");
+    if (all && all.length >= 0) return all;
+  } catch (_) {}
+
+  // limit 0 = no cap (PocketBase JSVM)
+  try {
+    return $app.findRecordsByFilter("instances", "", "name", 0, 0) || [];
+  } catch (_) {
+    return [];
   }
-  return out;
 }
 
 function parseConnectedPeers(raw, selfNorm) {
@@ -197,6 +199,26 @@ function resolveFolderDirections(fA, fB, syncthingIdA) {
 }
 
 routerAdd("GET", "/api/syncms/topology", (c) => {
+  try {
+    return buildTopologyResponse(c);
+  } catch (err) {
+    return c.json(200, {
+      instances: [],
+      links: [],
+      diagnostics: {
+        managedCount: 0,
+        withSyncthingId: 0,
+        folderLinkCount: 0,
+        connectionLinkCount: 0,
+        hints: ["Topologie-hook fout: " + String(err)],
+        pairDebug: [],
+        hookError: String(err),
+      },
+    });
+  }
+});
+
+function buildTopologyResponse(c) {
   const records = listAllInstances();
   const managed = [];
 
@@ -454,7 +476,7 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
         type: f.type,
         typeLabel: f.typeLabel,
         rescanIntervalS: f.rescanIntervalS,
-        sharedWith: f.sharedWith,
+        sharedWith: f.sharedWith || [],
       })),
     })),
     links,
@@ -467,4 +489,4 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       pairDebug,
     },
   });
-});
+}
