@@ -56,12 +56,25 @@ function formatBytes(n) {
 }
 
 function formatSpeed(bps) {
-  return `${formatBytes(bps)}/s`;
+  const v = Number(bps) || 0;
+  if (v < 1024) return `${v.toFixed(2)} B/s`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let x = v / 1024;
+  let i = 0;
+  while (x >= 1024 && i < units.length - 1) {
+    x /= 1024;
+    i += 1;
+  }
+  return `${x.toFixed(2)} ${units[i]}/s`;
 }
+
+const SPEED_HISTORY_MINUTES = 480;
 
 function rangeStart(range) {
   const now = new Date();
   switch (range) {
+    case "8h":
+      return new Date(now.getTime() - 8 * 3600 * 1000);
     case "24h":
       return new Date(now.getTime() - 24 * 3600 * 1000);
     case "7d":
@@ -75,7 +88,7 @@ function rangeStart(range) {
 
 function bucketKey(d, range) {
   const t = d.getTime();
-  if (range === "24h") {
+  if (range === "8h" || range === "24h") {
     const m = new Date(t);
     m.setMinutes(0, 0, 0);
     return m.toISOString();
@@ -157,6 +170,51 @@ function aggregateChartData(rows, useHourly, range) {
   return { labels, inData, outData, inSpeed, outSpeed };
 }
 
+function floorMinuteMs(d) {
+  const m = new Date(d.getTime());
+  m.setSeconds(0, 0);
+  return m.getTime();
+}
+
+function buildMinuteSpeedSeries(rows) {
+  const end = new Date();
+  end.setSeconds(0, 0);
+  const endMs = end.getTime();
+  const startMs = endMs - (SPEED_HISTORY_MINUTES - 1) * 60 * 1000;
+
+  const byMinute = new Map();
+  for (const row of rows) {
+    const dt = parsePbDate(row.recorded_at);
+    if (!dt) continue;
+    const key = floorMinuteMs(dt);
+    if (key < startMs || key > endMs) continue;
+    const cur = byMinute.get(key) || { in: 0, out: 0, n: 0 };
+    cur.in += Number(row.in_speed_bps) || 0;
+    cur.out += Number(row.out_speed_bps) || 0;
+    cur.n += 1;
+    byMinute.set(key, cur);
+  }
+
+  const labels = [];
+  const inSpeed = [];
+  const outSpeed = [];
+  for (let i = 0; i < SPEED_HISTORY_MINUTES; i++) {
+    const t = startMs + i * 60 * 1000;
+    labels.push(
+      new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    );
+    const slot = byMinute.get(t);
+    if (slot && slot.n > 0) {
+      inSpeed.push(slot.in / slot.n);
+      outSpeed.push(slot.out / slot.n);
+    } else {
+      inSpeed.push(0);
+      outSpeed.push(0);
+    }
+  }
+  return { labels, inSpeed, outSpeed };
+}
+
 function chartColors() {
   return {
     in: "rgba(71, 198, 255, 0.85)",
@@ -168,13 +226,11 @@ function chartColors() {
   };
 }
 
-function renderCharts(data) {
+function renderTransferChart(data) {
   const c = chartColors();
   const transferCtx = document.getElementById("transfer-chart");
-  const speedCtx = document.getElementById("speed-chart");
 
   if (state.transferChart) state.transferChart.destroy();
-  if (state.speedChart) state.speedChart.destroy();
 
   state.transferChart = new Chart(transferCtx, {
     type: "bar",
@@ -218,6 +274,13 @@ function renderCharts(data) {
       },
     },
   });
+}
+
+function renderSpeedChart8h(data) {
+  const c = chartColors();
+  const speedCtx = document.getElementById("speed-chart");
+
+  if (state.speedChart) state.speedChart.destroy();
 
   state.speedChart = new Chart(speedCtx, {
     type: "line",
@@ -231,6 +294,9 @@ function renderCharts(data) {
           backgroundColor: c.inFill,
           fill: true,
           tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          borderWidth: 2,
         },
         {
           label: "Upload snelheid",
@@ -239,14 +305,26 @@ function renderCharts(data) {
           backgroundColor: c.outFill,
           fill: true,
           tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          borderWidth: 2,
         },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
       scales: {
-        x: { ticks: { color: c.text, maxRotation: 45 }, grid: { color: c.grid } },
+        x: {
+          ticks: {
+            color: c.text,
+            maxRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: 12,
+          },
+          grid: { color: c.grid },
+        },
         y: {
           ticks: {
             color: c.text,
@@ -259,6 +337,7 @@ function renderCharts(data) {
         legend: { labels: { color: c.text } },
         tooltip: {
           callbacks: {
+            title: (items) => (items[0] ? `Minuut ${items[0].label}` : ""),
             label: (ctx) => `${ctx.dataset.label}: ${formatSpeed(ctx.raw)}`,
           },
         },
@@ -338,6 +417,19 @@ function formatWhen(s) {
 const dialog = document.getElementById("instance-dialog");
 const form = document.getElementById("instance-form");
 
+function setTestConnectionStatus(kind, message) {
+  const el = document.getElementById("test-connection-status");
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    el.className = "test-status";
+    return;
+  }
+  el.hidden = false;
+  el.className = `test-status ${kind}`;
+  el.textContent = message;
+}
+
 function openDialog(inst) {
   state.editingId = inst?.id || null;
   document.getElementById("dialog-title").textContent = inst
@@ -347,6 +439,7 @@ function openDialog(inst) {
   form.base_url.value = inst?.base_url || "";
   form.api_key.value = inst?.api_key || "";
   form.enabled.checked = inst ? inst.enabled !== false : true;
+  setTestConnectionStatus("", "");
   dialog.showModal();
 }
 
@@ -382,6 +475,30 @@ document.getElementById("btn-cancel").addEventListener("click", () => dialog.clo
 document.getElementById("btn-add-instance").addEventListener("click", () => openDialog(null));
 document.getElementById("btn-refresh").addEventListener("click", () => refresh());
 
+document.getElementById("btn-test-connection").addEventListener("click", async () => {
+  const baseUrl = form.base_url.value.trim();
+  const apiKey = form.api_key.value.trim();
+  if (!baseUrl || !apiKey) {
+    setTestConnectionStatus("err", "Vul eerst URL en API key in.");
+    return;
+  }
+  setTestConnectionStatus("busy", "Verbinding testen…");
+  try {
+    const res = await pbRequest("/api/syncms/test-connection", {
+      method: "POST",
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+    });
+    if (res.ok) {
+      const idHint = res.deviceId ? ` · ${res.deviceId.slice(0, 11)}…` : "";
+      setTestConnectionStatus("ok", `Verbinding OK — Syncthing ${res.version}${idHint}`);
+    } else {
+      setTestConnectionStatus("err", res.error || "Verbinding mislukt");
+    }
+  } catch (err) {
+    setTestConnectionStatus("err", err.message);
+  }
+});
+
 document.getElementById("chart-instance").addEventListener("change", async (e) => {
   state.chartInstance = e.target.value;
   await loadCharts();
@@ -407,14 +524,29 @@ function syncInstanceSelect() {
   sel.value = cur;
 }
 
-async function loadCharts() {
+async function loadTransferChart() {
   const { rows, useHourly } = await loadSamplesForRange(state.range);
   let filtered = rows;
   if (state.chartInstance) {
     filtered = rows.filter((r) => r.instance === state.chartInstance);
   }
   const data = aggregateChartData(filtered, useHourly, state.range);
-  renderCharts(data);
+  renderTransferChart(data);
+}
+
+async function loadSpeedChart8h() {
+  const from = rangeStart("8h");
+  const filter = `recorded_at >= "${toPbFilterDate(from)}"`;
+  const rows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
+  let filtered = rows;
+  if (state.chartInstance) {
+    filtered = rows.filter((r) => r.instance === state.chartInstance);
+  }
+  renderSpeedChart8h(buildMinuteSpeedSeries(filtered));
+}
+
+async function loadCharts() {
+  await Promise.all([loadTransferChart(), loadSpeedChart8h()]);
 }
 
 async function refresh() {
