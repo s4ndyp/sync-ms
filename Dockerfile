@@ -4,7 +4,7 @@ ARG POCKETBASE_VERSION=0.40.4
 
 FROM golang:1.22-alpine AS collector
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY go.mod go.sum* ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
