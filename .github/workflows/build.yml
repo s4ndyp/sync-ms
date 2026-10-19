@@ -1,0 +1,124 @@
+name: Docker CI/CD voor Sync-MS
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  test_build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Go test & build collector
+        run: |
+          go vet ./...
+          CGO_ENABLED=0 go build -o /dev/null ./cmd/collector
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (CI)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sync-ms:ci
+
+  build_and_push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: test_build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stel dynamische image tag in
+        id: set_tag
+        run: |
+          BRANCH_NAME="${{ github.ref_name }}"
+          IMAGE_BASE_NAME="ghcr.io/${{ github.repository }}"
+
+          if [ "$BRANCH_NAME" = "main" ]; then
+            TAG_VALUE="$IMAGE_BASE_NAME:latest"
+          else
+            TAG_VALUE="$IMAGE_BASE_NAME:$BRANCH_NAME"
+          fi
+
+          echo "full_tag=$TAG_VALUE" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Version vars
+        id: ver
+        run: |
+          echo "version=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "buildtime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.set_tag.outputs.full_tag }}
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            COMMIT=${{ steps.ver.outputs.commit }}
+            BUILDTIME=${{ steps.ver.outputs.buildtime }}
+
+  ensure_pull_request:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/beta'
+    runs-on: ubuntu-latest
+    needs: test_build
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.ref.replace('refs/heads/', '');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              head: `${owner}:${branch}`,
+              state: 'open',
+            });
+            if (prs.length > 0) {
+              core.info(`Open PR bestaat al: #${prs[0].number}`);
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.create({
+              owner,
+              repo,
+              title: branch.replace(/^cursor\//, '').replace(/-/g, ' '),
+              head: branch,
+              base: 'main',
+              body: [
+                'Automatisch geopende PR na push (Sync-MS CI).',
+                '',
+                `- Branch: \`${branch}\``,
+                `- Commit: ${context.sha}`,
+              ].join('\n'),
+              draft: true,
+            });
+            core.info(`PR aangemaakt: #${pr.number}`);

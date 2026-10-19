@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sync-MS — Syncthing monitor</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="/favicon.svg" alt="" width="28" height="28" />
+        <div>
+          <h1>Sync-MS</h1>
+          <p class="subtitle">Syncthing management &amp; statistieken</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" id="btn-refresh" class="btn ghost">Vernieuwen</button>
+        <button type="button" id="btn-add-instance" class="btn primary">Instance toevoegen</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel" id="overview-panel">
+        <h2>Overzicht</h2>
+        <div id="instance-cards" class="cards"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Transferred bytes</h2>
+          <div class="panel-tools">
+            <label class="inline-select">
+              Instance
+              <select id="chart-instance">
+                <option value="">Alle instances</option>
+              </select>
+            </label>
+            <div class="segmented" role="tablist" aria-label="Periode">
+            <button type="button" data-range="24h" class="active">24 uur</button>
+            <button type="button" data-range="7d">7 dagen</button>
+            <button type="button" data-range="month">Maand</button>
+            <button type="button" data-range="all">All-time</button>
+            </div>
+          </div>
+        </div>
+        <p class="hint">
+          Download (in) en upload (out) per interval. Snelheid wordt berekend uit opeenvolgende
+          <code>/rest/system/connections</code> metingen.
+        </p>
+        <div class="chart-wrap">
+          <canvas id="transfer-chart" height="120"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Transfer speed (recent)</h2>
+        <div class="chart-wrap">
+          <canvas id="speed-chart" height="100"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="instance-dialog">
+      <form method="dialog" id="instance-form">
+        <h3 id="dialog-title">Syncthing instance</h3>
+        <label>
+          Naam
+          <input name="name" required maxlength="120" autocomplete="off" />
+        </label>
+        <label>
+          GUI / API URL
+          <input
+            name="base_url"
+            required
+            type="url"
+            placeholder="http://192.168.1.10:8384"
+            autocomplete="off"
+          />
+        </label>
+        <label>
+          API key
+          <input name="api_key" required maxlength="256" autocomplete="off" />
+        </label>
+        <label class="checkbox">
+          <input name="enabled" type="checkbox" checked />
+          Monitoring ingeschakeld
+        </label>
+        <p class="hint small">
+          Maak in Syncthing onder <em>Instellingen → API</em> een key aan. Geen login op deze server —
+          beveilig het netwerk (VPN / reverse proxy) indien nodig.
+        </p>
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-cancel">Annuleren</button>
+          <button type="submit" class="btn primary">Opslaan</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="footer">
+      <span id="footer-status">—</span>
+    </footer>
+  </body>
+</html>
