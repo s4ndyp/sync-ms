@@ -243,6 +243,41 @@ code {
   display: block;
 }
 
+.detail-subhead {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.folder-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  background: var(--card);
+}
+
+.folder-item summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.folder-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+}
+
+.dim {
+  color: var(--dim);
+}
+
 .topology-board {
   position: relative;
   width: 100%;
