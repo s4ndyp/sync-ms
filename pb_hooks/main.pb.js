@@ -198,26 +198,6 @@ function resolveFolderDirections(fA, fB, syncthingIdA) {
   return { aToB, bToA };
 }
 
-routerAdd("GET", "/api/syncms/topology", (c) => {
-  try {
-    return buildTopologyResponse(c);
-  } catch (err) {
-    return c.json(200, {
-      instances: [],
-      links: [],
-      diagnostics: {
-        managedCount: 0,
-        withSyncthingId: 0,
-        folderLinkCount: 0,
-        connectionLinkCount: 0,
-        hints: ["Topologie-hook fout: " + String(err)],
-        pairDebug: [],
-        hookError: String(err),
-      },
-    });
-  }
-});
-
 function buildTopologyResponse(c) {
   const records = listAllInstances();
   const managed = [];
@@ -490,3 +470,23 @@ function buildTopologyResponse(c) {
     },
   });
 }
+
+routerAdd("GET", "/api/syncms/topology", (c) => {
+  try {
+    return buildTopologyResponse(c);
+  } catch (err) {
+    return c.json(200, {
+      instances: [],
+      links: [],
+      diagnostics: {
+        managedCount: 0,
+        withSyncthingId: 0,
+        folderLinkCount: 0,
+        connectionLinkCount: 0,
+        hints: ["Topologie-hook fout: " + String(err)],
+        pairDebug: [],
+        hookError: String(err),
+      },
+    });
+  }
+});
