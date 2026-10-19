@@ -54,10 +54,47 @@ function folderDeviceIds(folder) {
   const devices = folder.devices || [];
   for (let i = 0; i < devices.length; i++) {
     const d = devices[i];
-    const id = d.deviceID || d.deviceId || d.id;
+    const id = d.deviceID || d.deviceId;
     if (id) ids.push(normalizeDeviceId(id));
   }
   return ids;
+}
+
+function parseDeviceNames(raw) {
+  const map = {};
+  try {
+    const list = JSON.parse(raw || "[]");
+    if (!Array.isArray(list)) return map;
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const id = d.deviceID || d.deviceId;
+      if (!id) continue;
+      map[normalizeDeviceId(id)] = d.name || id;
+    }
+  } catch (_) {}
+  return map;
+}
+
+function folderTypeLabel(type) {
+  if (type === "sendonly") return "Alleen verzenden";
+  if (type === "receiveonly") return "Alleen ontvangen";
+  return "Verzenden en ontvangen";
+}
+
+function enrichFolderSharedWith(folder, deviceNames, byDevice) {
+  const sharedWith = [];
+  for (let i = 0; i < folder.devices.length; i++) {
+    const devNorm = folder.devices[i];
+    const peer = byDevice[devNorm];
+    sharedWith.push({
+      deviceId: devNorm,
+      deviceName: deviceNames[devNorm] || devNorm.slice(0, 11) + "…",
+      inSyncMs: !!peer,
+      instanceId: peer ? peer.instanceId : "",
+      instanceName: peer ? peer.name : "",
+    });
+  }
+  folder.sharedWith = sharedWith;
 }
 
 routerAdd("POST", "/api/syncms/test-connection", (c) => {
@@ -182,6 +219,7 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       syncthingId: "",
       folders: [],
       connectedPeers: [],
+      deviceNames: {},
       error: "",
     };
 
@@ -198,6 +236,11 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
         if (st.myID) syncthingId = normalizeDeviceId(st.myID);
       }
 
+      const devRes = stRequest(baseUrl, apiKey, "/rest/config/devices");
+      if (devRes.statusCode === 200) {
+        entry.deviceNames = parseDeviceNames(devRes.raw);
+      }
+
       const folderRes = stRequest(baseUrl, apiKey, "/rest/config/folders");
       if (folderRes.statusCode !== 200) {
         const prev = entry.error ? entry.error + "; " : "";
@@ -209,8 +252,12 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
           entry.folders.push({
             id: folder.id || "",
             label: folder.label || folder.id || "map",
+            path: folder.path || "",
             type: folder.type || "sendreceive",
+            typeLabel: folderTypeLabel(folder.type || "sendreceive"),
+            rescanIntervalS: folder.rescanIntervalS || 0,
             devices: folderDeviceIds(folder),
+            sharedWith: [],
           });
         }
       }
@@ -238,52 +285,63 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
     }
   }
 
+  for (let i = 0; i < managed.length; i++) {
+    const entry = managed[i];
+    for (let j = 0; j < entry.folders.length; j++) {
+      enrichFolderSharedWith(entry.folders[j], entry.deviceNames, byDevice);
+    }
+  }
+
   const links = [];
   const linkKeys = {};
 
+  function pushFolderLink(instA, instB, fA, fB) {
+    const pairKey =
+      instA.instanceId < instB.instanceId
+        ? `${instA.instanceId}|${instB.instanceId}|${fA.id}`
+        : `${instB.instanceId}|${instA.instanceId}|${fA.id}`;
+    if (linkKeys[pairKey]) return;
+
+    const dir = resolveFolderDirections(fA, fB, instA.syncthingId);
+    let aToB = dir.aToB;
+    let bToA = dir.bToA;
+    if (!aToB && !bToA) {
+      aToB = true;
+      bToA = fA.type === "sendreceive" || fB.type === "sendreceive";
+    }
+
+    linkKeys[pairKey] = true;
+    links.push({
+      kind: "folder",
+      folderId: fA.id,
+      folderLabel: fA.label || fB.label || fA.id,
+      from: instA.instanceId,
+      to: instB.instanceId,
+      aToB,
+      bToA,
+      bidirectional: aToB && bToA,
+    });
+  }
+
+  // Pijlen tussen geregistreerde instances: zelfde folder-ID op beide nodes (bijv. xdio).
   for (let a = 0; a < managed.length; a++) {
-    const instA = managed[a];
-    if (!instA.syncthingId) continue;
+    for (let b = a + 1; b < managed.length; b++) {
+      const instA = managed[a];
+      const instB = managed[b];
+      if (!instA.syncthingId || !instB.syncthingId) continue;
 
-    for (let fi = 0; fi < instA.folders.length; fi++) {
-      const fA = instA.folders[fi];
-      if (!fA.id) continue;
+      const foldersB = {};
+      for (let fi = 0; fi < instB.folders.length; fi++) {
+        const fb = instB.folders[fi];
+        if (fb.id) foldersB[fb.id] = fb;
+      }
 
-      for (let di = 0; di < fA.devices.length; di++) {
-        const devId = fA.devices[di];
-        const peer = byDevice[devId];
-        if (!peer || peer.instanceId === instA.instanceId) continue;
-
-        let instB = null;
-        for (let mi = 0; mi < managed.length; mi++) {
-          if (managed[mi].instanceId === peer.instanceId) {
-            instB = managed[mi];
-            break;
-          }
-        }
-        if (!instB) continue;
-
-        const pairKey =
-          instA.instanceId < peer.instanceId
-            ? `${instA.instanceId}|${peer.instanceId}|${fA.id}`
-            : `${peer.instanceId}|${instA.instanceId}|${fA.id}`;
-        if (linkKeys[pairKey]) continue;
-
-        const fB = peer.folders[fA.id] || null;
-        const dir = resolveFolderDirections(fA, fB, instA.syncthingId);
-        if (!dir.aToB && !dir.bToA) continue;
-
-        linkKeys[pairKey] = true;
-        links.push({
-          kind: "folder",
-          folderId: fA.id,
-          folderLabel: fA.label,
-          from: instA.instanceId,
-          to: peer.instanceId,
-          aToB: dir.aToB,
-          bToA: dir.bToA,
-          bidirectional: dir.aToB && dir.bToA,
-        });
+      for (let fi = 0; fi < instA.folders.length; fi++) {
+        const fA = instA.folders[fi];
+        if (!fA.id) continue;
+        const fB = foldersB[fA.id];
+        if (!fB) continue;
+        pushFolderLink(instA, instB, fA, fB);
       }
     }
   }
@@ -345,7 +403,7 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
   }
   if (managed.length >= 2 && withId >= 2 && folderLinks === 0) {
     hints.push(
-      "Geen gedeelde mappen tussen geregistreerde nodes — controleer of beide device-ID's in elkaars folders staan (zelfde folder-ID)."
+      "Geen gemeenschappelijke folder-ID's tussen geregistreerde instances — beide nodes moeten in Sync-MS staan (Pixel/Laptop/etc. alleen in Syncthing is niet genoeg voor een pijl)."
     );
   }
   for (let i = 0; i < managed.length; i++) {
@@ -357,6 +415,30 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
     }
   }
 
+  const pairDebug = [];
+  for (let a = 0; a < managed.length; a++) {
+    for (let b = a + 1; b < managed.length; b++) {
+      const instA = managed[a];
+      const instB = managed[b];
+      const common = [];
+      const idsB = {};
+      for (let i = 0; i < instB.folders.length; i++) {
+        if (instB.folders[i].id) idsB[instB.folders[i].id] = true;
+      }
+      for (let i = 0; i < instA.folders.length; i++) {
+        const id = instA.folders[i].id;
+        if (id && idsB[id]) common.push(id);
+      }
+      if (common.length) {
+        pairDebug.push({
+          a: instA.name,
+          b: instB.name,
+          commonFolderIds: common,
+        });
+      }
+    }
+  }
+
   return c.json(200, {
     instances: managed.map((m) => ({
       instanceId: m.instanceId,
@@ -365,6 +447,15 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       folderCount: m.folders.length,
       connectedPeerCount: m.connectedPeers.length,
       error: m.error,
+      folders: m.folders.map((f) => ({
+        id: f.id,
+        label: f.label,
+        path: f.path,
+        type: f.type,
+        typeLabel: f.typeLabel,
+        rescanIntervalS: f.rescanIntervalS,
+        sharedWith: f.sharedWith,
+      })),
     })),
     links,
     diagnostics: {
@@ -373,6 +464,7 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       folderLinkCount: folderLinks,
       connectionLinkCount: links.length - folderLinks,
       hints,
+      pairDebug,
     },
   });
 });

@@ -3,6 +3,7 @@ const state = {
   topology: { links: [] },
   nodeLayout: {},
   topoErrors: {},
+  foldersByInstance: {},
   selectedInstanceId: null,
   range: "24h",
   chartInstance: "",
