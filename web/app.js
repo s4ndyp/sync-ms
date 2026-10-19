@@ -2,6 +2,8 @@ const state = {
   instances: [],
   topology: { links: [] },
   nodeLayout: {},
+  topoErrors: {},
+  selectedInstanceId: null,
   range: "24h",
   chartInstance: "",
   editingId: null,
@@ -11,7 +13,7 @@ const state = {
 
 const TOPO_W = 1000;
 const TOPO_H = 560;
-const TOPO_NODE_PAD = 72;
+const TOPO_NODE_PAD = 46;
 
 async function pbRequest(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -489,54 +491,94 @@ function renderTopologyEdges(links, layout) {
   svg.innerHTML = defs + paths.join("") + labels.join("");
 }
 
-function renderTopologyNodes(instances, layout, topoErrors) {
+function selectInstance(instanceId) {
+  state.selectedInstanceId = instanceId;
+  document.querySelectorAll(".topo-chip").forEach((el) => {
+    el.classList.toggle("selected", el.dataset.id === instanceId);
+    el.setAttribute("aria-pressed", el.dataset.id === instanceId ? "true" : "false");
+  });
+  renderInstanceDetail();
+}
+
+function renderTopologyNodes(instances, layout) {
   const root = document.getElementById("topology-nodes");
   root.innerHTML = instances
     .map((inst) => {
       const pos = layout[inst.id];
       if (!pos) return "";
       const online = inst.online;
-      const topoErr = topoErrors[inst.id];
+      const selected = inst.id === state.selectedInstanceId;
       const left = (pos.x / TOPO_W) * 100;
       const top = (pos.y / TOPO_H) * 100;
       return `
-      <article class="topo-node card" data-id="${inst.id}" style="left:${left}%;top:${top}%">
-        <div class="card-head">
-          <h3>${escapeHtml(inst.name)}</h3>
-          <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
-        </div>
-        <dl class="stat-grid">
-          <dt>In</dt><dd>${formatSpeed(inst.in_speed_bps)}</dd>
-          <dt>Out</dt><dd>${formatSpeed(inst.out_speed_bps)}</dd>
-          <dt>Versie</dt><dd>${escapeHtml(inst.version || "—")}</dd>
-        </dl>
-        ${
-          inst.last_error || topoErr
-            ? `<p class="hint small" style="color:var(--danger)">${escapeHtml(inst.last_error || topoErr)}</p>`
-            : ""
-        }
-        <div class="card-actions">
-          <button type="button" class="btn ghost btn-edit">Bewerken</button>
-          <button type="button" class="btn danger btn-delete">Verwijderen</button>
-        </div>
-      </article>`;
+      <button
+        type="button"
+        class="topo-chip${selected ? " selected" : ""}"
+        data-id="${inst.id}"
+        style="left:${left}%;top:${top}%"
+        aria-pressed="${selected ? "true" : "false"}"
+        title="${escapeHtml(inst.name)}"
+      >
+        <span class="topo-chip-name">${escapeHtml(inst.name)}</span>
+        <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
+      </button>`;
     })
     .join("");
 
-  root.querySelectorAll(".btn-edit").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.closest(".topo-node").dataset.id;
-      openDialog(state.instances.find((i) => i.id === id));
-    });
+  root.querySelectorAll(".topo-chip").forEach((btn) => {
+    btn.addEventListener("click", () => selectInstance(btn.dataset.id));
   });
-  root.querySelectorAll(".btn-delete").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.closest(".topo-node").dataset.id;
-      const inst = state.instances.find((i) => i.id === id);
-      if (!confirm(`Instance "${inst.name}" verwijderen?`)) return;
-      await pbRequest(`/api/collections/instances/records/${id}`, { method: "DELETE" });
-      await refresh();
-    });
+}
+
+function renderInstanceDetail() {
+  const panel = document.getElementById("instance-detail");
+  const inst = state.instances.find((i) => i.id === state.selectedInstanceId);
+
+  if (!inst) {
+    panel.innerHTML = `<p class="hint">Selecteer een instance in het diagram.</p>`;
+    return;
+  }
+
+  const topoErr = state.topoErrors[inst.id];
+  const guiUrl = (inst.base_url || "").trim();
+  const online = inst.online;
+
+  panel.innerHTML = `
+    <div class="detail-head">
+      <h3>${escapeHtml(inst.name)}</h3>
+      <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
+    </div>
+    <dl class="stat-grid detail-stats">
+      <dt>Totaal in</dt><dd>${formatBytes(inst.in_bytes_total)}</dd>
+      <dt>Totaal out</dt><dd>${formatBytes(inst.out_bytes_total)}</dd>
+      <dt>Snelheid in</dt><dd>${formatSpeed(inst.in_speed_bps)}</dd>
+      <dt>Snelheid out</dt><dd>${formatSpeed(inst.out_speed_bps)}</dd>
+      <dt>Versie</dt><dd>${escapeHtml(inst.version || "—")}</dd>
+      <dt>Syncthing ID</dt><dd class="mono">${escapeHtml(inst.syncthing_id ? `${inst.syncthing_id.slice(0, 11)}…` : "—")}</dd>
+      <dt>Laatst gezien</dt><dd>${formatWhen(inst.last_seen)}</dd>
+      <dt>API URL</dt><dd class="mono wrap">${escapeHtml(guiUrl || "—")}</dd>
+    </dl>
+    ${
+      inst.last_error || topoErr
+        ? `<p class="hint small detail-error">${escapeHtml(inst.last_error || topoErr)}</p>`
+        : ""
+    }
+    <div class="detail-actions">
+      ${
+        guiUrl
+          ? `<a class="btn primary" href="${escapeHtml(guiUrl)}" target="_blank" rel="noopener noreferrer">Open Syncthing GUI</a>`
+          : ""
+      }
+      <button type="button" class="btn ghost" id="detail-btn-edit">Bewerken</button>
+      <button type="button" class="btn danger" id="detail-btn-delete">Verwijderen</button>
+    </div>`;
+
+  document.getElementById("detail-btn-edit")?.addEventListener("click", () => openDialog(inst));
+  document.getElementById("detail-btn-delete")?.addEventListener("click", async () => {
+    if (!confirm(`Instance "${inst.name}" verwijderen?`)) return;
+    await pbRequest(`/api/collections/instances/records/${inst.id}`, { method: "DELETE" });
+    state.selectedInstanceId = null;
+    await refresh();
   });
 }
 
@@ -550,30 +592,36 @@ async function loadTopology() {
 }
 
 function renderOverview(topology) {
-  const board = document.getElementById("topology-board");
+  const split = document.getElementById("overview-split");
   const empty = document.getElementById("topology-empty");
 
   if (!state.instances.length) {
-    board.hidden = true;
+    split.hidden = true;
     empty.hidden = false;
     empty.textContent = "Nog geen instances. Voeg Syncthing-installaties toe (URL + API key).";
+    state.selectedInstanceId = null;
     return;
   }
 
-  board.hidden = false;
+  split.hidden = false;
   empty.hidden = true;
 
   const ids = state.instances.map((i) => i.id);
   state.nodeLayout = layoutTopologyNodes(ids);
   state.topology = topology || { links: [] };
 
-  const topoErrors = {};
+  state.topoErrors = {};
   for (const ti of topology.instances || []) {
-    if (ti.error) topoErrors[ti.instanceId] = ti.error;
+    if (ti.error) state.topoErrors[ti.instanceId] = ti.error;
   }
 
-  renderTopologyNodes(state.instances, state.nodeLayout, topoErrors);
+  if (!state.selectedInstanceId || !ids.includes(state.selectedInstanceId)) {
+    state.selectedInstanceId = state.instances[0].id;
+  }
+
+  renderTopologyNodes(state.instances, state.nodeLayout);
   renderTopologyEdges(state.topology.links || [], state.nodeLayout);
+  renderInstanceDetail();
 }
 
 function escapeHtml(s) {

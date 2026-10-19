@@ -33,9 +33,16 @@
             <strong>één punt</strong> = enkelzijdig (sendonly/receiveonly).
           </p>
         </div>
-        <div id="topology-board" class="topology-board" hidden>
-          <svg id="topology-edges" class="topology-edges" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
-          <div id="topology-nodes" class="topology-nodes"></div>
+        <div id="overview-split" class="overview-split" hidden>
+          <div class="overview-topology">
+            <div id="topology-board" class="topology-board">
+              <svg id="topology-edges" class="topology-edges" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
+              <div id="topology-nodes" class="topology-nodes"></div>
+            </div>
+          </div>
+          <aside id="instance-detail" class="instance-detail" aria-live="polite">
+            <p class="hint">Selecteer een instance in het diagram.</p>
+          </aside>
         </div>
         <p id="topology-empty" class="hint">Nog geen instances. Voeg Syncthing-installaties toe.</p>
       </section>
