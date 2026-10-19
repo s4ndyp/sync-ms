@@ -541,9 +541,30 @@ function renderInstanceDetail() {
     return;
   }
 
-  const topoErr = state.topoErrors[inst.id];
+  const topoErr = state.topoErrors[inst.id] || state.topoErrors.__hook;
   const guiUrl = (inst.base_url || "").trim();
   const online = inst.online;
+  const folders = state.foldersByInstance[inst.id] || [];
+  const foldersHtml =
+    folders.length === 0
+      ? `<p class="hint small">Geen map-config (topology API).</p>`
+      : `<div class="folder-list">${folders
+          .map((f) => {
+            const shared = (f.sharedWith || [])
+              .map((s) =>
+                s.inSyncMs && s.instanceName
+                  ? `<strong>${escapeHtml(s.instanceName)}</strong>`
+                  : escapeHtml(s.deviceName || "")
+              )
+              .join(", ");
+            return `<details class="folder-item"><summary><code>${escapeHtml(f.id)}</code> — ${escapeHtml(f.label || f.id)}</summary>
+              <dl class="stat-grid folder-meta">
+                <dt>Locatie</dt><dd class="mono wrap">${escapeHtml(f.path || "—")}</dd>
+                <dt>Soort</dt><dd>${escapeHtml(f.typeLabel || f.type || "—")}</dd>
+                <dt>Gedeeld met</dt><dd class="wrap">${shared || "—"}</dd>
+              </dl></details>`;
+          })
+          .join("")}</div>`;
 
   panel.innerHTML = `
     <div class="detail-head">
@@ -589,7 +610,17 @@ async function loadTopology() {
     return await pbRequest("/api/syncms/topology");
   } catch (err) {
     console.warn("topology", err);
-    return { instances: [], links: [] };
+    return {
+      instances: [],
+      links: [],
+      diagnostics: {
+        hints: [
+          "Topologie API mislukt (" +
+            err.message +
+            "). Controleer of de container de nieuwste pb_hooks heeft (image rebuild).",
+        ],
+      },
+    };
   }
 }
 
@@ -613,8 +644,13 @@ function renderOverview(topology) {
   state.topology = topology || { links: [] };
 
   state.topoErrors = {};
+  state.foldersByInstance = {};
   for (const ti of topology.instances || []) {
     if (ti.error) state.topoErrors[ti.instanceId] = ti.error;
+    state.foldersByInstance[ti.instanceId] = ti.folders || [];
+  }
+  if (topology.diagnostics?.hookError) {
+    state.topoErrors.__hook = topology.diagnostics.hookError;
   }
 
   if (!state.selectedInstanceId || !ids.includes(state.selectedInstanceId)) {
