@@ -108,11 +108,11 @@ routerAdd("POST", "/api/syncms/test-connection", (c) => {
   });
 });
 
-function listEnabledInstances() {
+function listAllInstances() {
   const out = [];
   let offset = 0;
   for (;;) {
-    const chunk = $app.findRecordsByFilter("instances", "enabled = true", "name", 200, offset);
+    const chunk = $app.findRecordsByFilter("instances", "", "name", 200, offset);
     if (!chunk || chunk.length === 0) break;
     for (let i = 0; i < chunk.length; i++) out.push(chunk[i]);
     if (chunk.length < 200) break;
@@ -121,16 +121,54 @@ function listEnabledInstances() {
   return out;
 }
 
+function parseConnectedPeers(raw, selfNorm) {
+  const peers = [];
+  try {
+    const data = JSON.parse(raw || "{}");
+    const conns = data.connections || {};
+    const keys = Object.keys(conns);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const norm = normalizeDeviceId(key);
+      if (!norm || norm === selfNorm) continue;
+      if (conns[key] && conns[key].connected) peers.push(norm);
+    }
+  } catch (_) {}
+  return peers;
+}
+
+function resolveFolderDirections(fA, fB, syncthingIdA) {
+  const typeA = fA.type || "sendreceive";
+  let aToB = false;
+  let bToA = false;
+
+  if (typeA === "receiveonly") {
+    aToB = false;
+    bToA = true;
+  } else if (typeA === "sendonly") {
+    aToB = true;
+    bToA = false;
+  } else if (fB && fB.devices.indexOf(syncthingIdA) >= 0) {
+    aToB = canSendFolder(typeA) && canReceiveFolder(fB.type || "sendreceive");
+    bToA = canSendFolder(fB.type || "sendreceive") && canReceiveFolder(typeA);
+  } else {
+    aToB = canSendFolder(typeA);
+    bToA = typeA === "sendreceive";
+  }
+
+  return { aToB, bToA };
+}
+
 routerAdd("GET", "/api/syncms/topology", (c) => {
-  const records = listEnabledInstances();
+  const records = listAllInstances();
   const managed = [];
 
-  /** @type {Record<string, { instanceId: string, name: string, folders: Map<string, any> }>} */
+  /** @type {Record<string, { instanceId: string, name: string, folders: object }>} */
   const byDevice = {};
 
   for (let i = 0; i < records.length; i++) {
     const rec = records[i];
-    if (!rec.get("enabled")) continue;
+    if (rec.get("enabled") === false) continue;
 
     const instanceId = rec.id;
     const name = rec.get("name") || instanceId;
@@ -143,6 +181,7 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       name,
       syncthingId: "",
       folders: [],
+      connectedPeers: [],
       error: "",
     };
 
@@ -161,7 +200,8 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
 
       const folderRes = stRequest(baseUrl, apiKey, "/rest/config/folders");
       if (folderRes.statusCode !== 200) {
-        entry.error = `folders: HTTP ${folderRes.statusCode}`;
+        const prev = entry.error ? entry.error + "; " : "";
+        entry.error = prev + `folders: HTTP ${folderRes.statusCode}`;
       } else {
         const folders = parseFolders(folderRes.raw);
         for (let f = 0; f < folders.length; f++) {
@@ -172,6 +212,13 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
             type: folder.type || "sendreceive",
             devices: folderDeviceIds(folder),
           });
+        }
+      }
+
+      if (syncthingId) {
+        const connRes = stRequest(baseUrl, apiKey, "/rest/system/connections");
+        if (connRes.statusCode === 200) {
+          entry.connectedPeers = parseConnectedPeers(connRes.raw, syncthingId);
         }
       }
     } catch (err) {
@@ -223,40 +270,90 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
         if (linkKeys[pairKey]) continue;
 
         const fB = peer.folders[fA.id] || null;
-
-        let aToB = canSendFolder(fA.type);
-        let bToA = false;
-
-        if (fB) {
-          aToB = aToB && canReceiveFolder(fB.type) && fB.devices.indexOf(instA.syncthingId) >= 0;
-          bToA =
-            canSendFolder(fB.type) &&
-            canReceiveFolder(fA.type) &&
-            fB.devices.indexOf(instA.syncthingId) >= 0;
-        } else if (fA.type === "sendonly") {
-          aToB = true;
-          bToA = false;
-        } else if (fA.type === "receiveonly") {
-          aToB = false;
-          bToA = true;
-        } else if (fA.type === "sendreceive") {
-          aToB = true;
-          bToA = true;
-        }
-
-        if (!aToB && !bToA) continue;
+        const dir = resolveFolderDirections(fA, fB, instA.syncthingId);
+        if (!dir.aToB && !dir.bToA) continue;
 
         linkKeys[pairKey] = true;
         links.push({
+          kind: "folder",
           folderId: fA.id,
           folderLabel: fA.label,
           from: instA.instanceId,
           to: peer.instanceId,
-          aToB,
-          bToA,
-          bidirectional: aToB && bToA,
+          aToB: dir.aToB,
+          bToA: dir.bToA,
+          bidirectional: dir.aToB && dir.bToA,
         });
       }
+    }
+  }
+
+  const pairHasFolder = {};
+  for (let li = 0; li < links.length; li++) {
+    const l = links[li];
+    const pk = l.from < l.to ? `${l.from}|${l.to}` : `${l.to}|${l.from}`;
+    pairHasFolder[pk] = true;
+  }
+
+  for (let a = 0; a < managed.length; a++) {
+    const instA = managed[a];
+    if (!instA.syncthingId) continue;
+    for (let pi = 0; pi < instA.connectedPeers.length; pi++) {
+      const peerDev = instA.connectedPeers[pi];
+      const peer = byDevice[peerDev];
+      if (!peer || peer.instanceId === instA.instanceId) continue;
+
+      const pk = instA.instanceId < peer.instanceId
+        ? `${instA.instanceId}|${peer.instanceId}`
+        : `${peer.instanceId}|${instA.instanceId}`;
+      if (pairHasFolder[pk]) continue;
+
+      const connKey = `${pk}|__connection__`;
+      if (linkKeys[connKey]) continue;
+      linkKeys[connKey] = true;
+
+      links.push({
+        kind: "connection",
+        folderId: "",
+        folderLabel: "Live verbinding",
+        from: instA.instanceId,
+        to: peer.instanceId,
+        aToB: true,
+        bToA: true,
+        bidirectional: true,
+      });
+      pairHasFolder[pk] = true;
+    }
+  }
+
+  const hints = [];
+  if (managed.length < 2) {
+    hints.push("Voeg minimaal 2 enabled instances toe in Sync-MS om pijlen tussen nodes te tonen.");
+  }
+  let withId = 0;
+  for (let i = 0; i < managed.length; i++) {
+    if (managed[i].syncthingId) withId++;
+  }
+  if (managed.length >= 2 && withId < 2) {
+    hints.push(
+      "syncthing_id ontbreekt op een of meer nodes — wacht op collector of gebruik Verbinding testen."
+    );
+  }
+  let folderLinks = 0;
+  for (let i = 0; i < links.length; i++) {
+    if (links[i].kind === "folder") folderLinks++;
+  }
+  if (managed.length >= 2 && withId >= 2 && folderLinks === 0) {
+    hints.push(
+      "Geen gedeelde mappen tussen geregistreerde nodes — controleer of beide device-ID's in elkaars folders staan (zelfde folder-ID)."
+    );
+  }
+  for (let i = 0; i < managed.length; i++) {
+    if (managed[i].error && managed[i].error.indexOf("folders:") >= 0) {
+      hints.push(
+        "API key heeft mogelijk geen rechten voor /rest/config/folders — maak een key met config-lezen aan."
+      );
+      break;
     }
   }
 
@@ -265,8 +362,17 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
       instanceId: m.instanceId,
       name: m.name,
       syncthingId: m.syncthingId,
+      folderCount: m.folders.length,
+      connectedPeerCount: m.connectedPeers.length,
       error: m.error,
     })),
     links,
+    diagnostics: {
+      managedCount: managed.length,
+      withSyncthingId: withId,
+      folderLinkCount: folderLinks,
+      connectionLinkCount: links.length - folderLinks,
+      hints,
+    },
   });
 });
