@@ -26,8 +26,18 @@
 
     <main class="layout">
       <section class="panel" id="overview-panel">
-        <h2>Overzicht</h2>
-        <div id="instance-cards" class="cards"></div>
+        <div class="panel-head overview-head">
+          <h2>Overzicht</h2>
+          <p class="hint small topology-legend">
+            Pijlen = gedeelde mappen tussen instances. <strong>Twee punten</strong> = bidirectioneel,
+            <strong>één punt</strong> = enkelzijdig (sendonly/receiveonly).
+          </p>
+        </div>
+        <div id="topology-board" class="topology-board" hidden>
+          <svg id="topology-edges" class="topology-edges" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
+          <div id="topology-nodes" class="topology-nodes"></div>
+        </div>
+        <p id="topology-empty" class="hint">Nog geen instances. Voeg Syncthing-installaties toe.</p>
       </section>
 
       <section class="panel">
