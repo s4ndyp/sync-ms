@@ -169,6 +169,11 @@ code {
   max-width: 52rem;
 }
 
+.topology-diag {
+  margin: 0.35rem 0 0;
+  color: var(--warn);
+}
+
 .overview-split {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 340px);
