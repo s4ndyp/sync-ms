@@ -40,13 +40,23 @@ Image: `ghcr.io/s4ndyp/sync-ms:latest`
 3. In Sync-MS: **Instance toevoegen** met `http://ip:8384` (of HTTPS) en de key
 4. Zorg dat de management-server de GUI-poort kan bereiken (firewall / Docker-netwerk)
 
-## Community-scripts (LXC)
+## Proxmox LXC (Xdio / community-scripts)
+
+Aanbevolen entrypoint (canonical in [s4ndyp/scripts](https://github.com/s4ndyp/scripts)):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/s4ndyp/sync-ms/main/deploy/sync-ms-install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/s4ndyp/scripts/main/sync-ms/sync-ms.sh)"
 ```
 
-Dit volgt hetzelfde patroon als [tracknote](https://github.com/s4ndyp/scripts/tree/main/tracknote).
+Optioneel vóór install: `GHCR_TOKEN` (private image), `SYNCMS_HTTP_PORT` (default **80** → UI op `http://<ip>`), `SYNCMS_SAMPLE_INTERVAL_SEC`, `SYNCMS_RETENTION_DAYS`. Na install: `~/sync-ms.creds`.
+
+Spiegel in deze repo: `deploy/sync-ms.sh`, `deploy/sync-ms-install.sh`, `deploy/.env.example`.
+
+Update in de LXC:
+
+```bash
+cd /opt/sync-ms && docker compose pull && docker compose up -d
+```
 
 ## Ontwikkeling
 

@@ -1,0 +1,17 @@
+# Zelfde stack als ../docker-compose.yml (voor deploy/overlays).
+services:
+  sync-ms:
+    image: ${SYNCMS_IMAGE:-ghcr.io/s4ndyp/sync-ms:latest}
+    pull_policy: always
+    container_name: sync-ms
+    restart: unless-stopped
+    ports:
+      - "${SYNCMS_HTTP_PORT:-8096}:8090"
+    environment:
+      SYNCMS_SAMPLE_INTERVAL_SEC: ${SYNCMS_SAMPLE_INTERVAL_SEC:-60}
+      SYNCMS_RETENTION_DAYS: ${SYNCMS_RETENTION_DAYS:-45}
+    volumes:
+      - syncms_data:/app/pb_data
+
+volumes:
+  syncms_data:
