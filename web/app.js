@@ -397,12 +397,15 @@ function quadMid(x1, y1, cx, cy, x2, y2) {
   };
 }
 
-function folderLinkColor(folderId, index) {
+function folderLinkColor(link) {
+  if (link.kind === "connection" || !link.folderId) {
+    return "hsla(210, 18%, 52%, 0.75)";
+  }
   const hues = [198, 158, 278, 32, 318, 120];
   let hash = 0;
-  const s = String(folderId || index);
+  const s = String(link.folderId);
   for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0;
-  const hue = hues[(Math.abs(hash) + index) % hues.length];
+  const hue = hues[Math.abs(hash) % hues.length];
   return `hsla(${hue}, 72%, 58%, 0.92)`;
 }
 
@@ -473,7 +476,7 @@ function renderTopologyEdges(links, layout) {
     const len = Math.hypot(dx, dy) || 1;
     const cx = mx - (dy / len) * curve;
     const cy = my + (dx / len) * curve;
-    const color = folderLinkColor(link.folderId, i);
+    const color = folderLinkColor(link);
 
     const markers = link.bidirectional
       ? 'marker-start="url(#sync-arrow-head)" marker-end="url(#sync-arrow-head)"'
