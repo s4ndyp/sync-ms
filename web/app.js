@@ -478,8 +478,9 @@ function renderTopologyEdges(links, layout) {
       ? 'marker-start="url(#sync-arrow-head)" marker-end="url(#sync-arrow-head)"'
       : 'marker-end="url(#sync-arrow-head)"';
 
+    const dash = link.kind === "connection" ? ' stroke-dasharray="8 6" opacity="0.75"' : "";
     paths.push(
-      `<path d="M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}" stroke="${color}" ${markers}></path>`
+      `<path d="M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}" stroke="${color}" ${markers}${dash}></path>`
     );
 
     const mid = quadMid(sx, sy, cx, cy, ex, ey);
@@ -622,6 +623,19 @@ function renderOverview(topology) {
   renderTopologyNodes(state.instances, state.nodeLayout);
   renderTopologyEdges(state.topology.links || [], state.nodeLayout);
   renderInstanceDetail();
+
+  const diagEl = document.getElementById("topology-diag");
+  const hints = topology.diagnostics?.hints || [];
+  if (hints.length && (state.topology.links || []).length === 0) {
+    diagEl.hidden = false;
+    diagEl.textContent = hints.join(" ");
+  } else if (hints.length) {
+    diagEl.hidden = false;
+    diagEl.textContent = hints.join(" ");
+  } else {
+    diagEl.hidden = true;
+    diagEl.textContent = "";
+  }
 }
 
 function escapeHtml(s) {

@@ -30,8 +30,9 @@
           <h2>Overzicht</h2>
           <p class="hint small topology-legend">
             Pijlen = gedeelde mappen tussen instances. <strong>Twee punten</strong> = bidirectioneel,
-            <strong>één punt</strong> = enkelzijdig (sendonly/receiveonly).
+            <strong>één punt</strong> = enkelzijdig. Gestippeld = alleen live TCP-verbinding (geen map-match).
           </p>
+          <p id="topology-diag" class="hint small topology-diag" hidden></p>
         </div>
         <div id="overview-split" class="overview-split" hidden>
           <div class="overview-topology">
