@@ -175,23 +175,44 @@ function parseConnectedPeers(raw, selfNorm) {
   return peers;
 }
 
-function resolveFolderDirections(fA, fB, syncthingIdA) {
+function folderListsPeer(folder, peerSyncthingIdNorm) {
+  const devices = folder.devices || [];
+  return devices.indexOf(peerSyncthingIdNorm) >= 0;
+}
+
+/** True when at least one side lists the other in folder.devices (Syncthing share config). */
+function folderShareConfigured(fA, fB, syncthingIdA, syncthingIdB) {
+  return folderListsPeer(fA, syncthingIdB) || folderListsPeer(fB, syncthingIdA);
+}
+
+function resolveFolderDirections(fA, fB, syncthingIdA, syncthingIdB) {
   const typeA = fA.type || "sendreceive";
+  const typeB = fB.type || "sendreceive";
+  const aListsB = folderListsPeer(fA, syncthingIdB);
+  const bListsA = folderListsPeer(fB, syncthingIdA);
+
   let aToB = false;
   let bToA = false;
 
-  if (typeA === "receiveonly") {
-    aToB = false;
-    bToA = true;
-  } else if (typeA === "sendonly") {
-    aToB = true;
-    bToA = false;
-  } else if (fB && fB.devices.indexOf(syncthingIdA) >= 0) {
-    aToB = canSendFolder(typeA) && canReceiveFolder(fB.type || "sendreceive");
-    bToA = canSendFolder(fB.type || "sendreceive") && canReceiveFolder(typeA);
-  } else {
-    aToB = canSendFolder(typeA);
-    bToA = typeA === "sendreceive";
+  // A → B: folder on A must list B in devices (same data as Syncthing GUI "Gedeeld met").
+  if (aListsB) {
+    if (typeA === "receiveonly") {
+      if (canSendFolder(typeB) && canReceiveFolder(typeA)) bToA = true;
+    } else if (typeA === "sendonly") {
+      if (canSendFolder(typeA) && canReceiveFolder(typeB)) aToB = true;
+    } else if (canSendFolder(typeA) && canReceiveFolder(typeB)) {
+      aToB = true;
+    }
+  }
+
+  if (bListsA) {
+    if (typeB === "receiveonly") {
+      if (canSendFolder(typeA) && canReceiveFolder(typeB)) aToB = true;
+    } else if (typeB === "sendonly") {
+      if (canSendFolder(typeB) && canReceiveFolder(typeA)) bToA = true;
+    } else if (canSendFolder(typeB) && canReceiveFolder(typeA)) {
+      bToA = true;
+    }
   }
 
   return { aToB, bToA };
@@ -301,13 +322,10 @@ function buildTopologyResponse(c) {
         : `${instB.instanceId}|${instA.instanceId}|${fA.id}`;
     if (linkKeys[pairKey]) return;
 
-    const dir = resolveFolderDirections(fA, fB, instA.syncthingId);
-    let aToB = dir.aToB;
-    let bToA = dir.bToA;
-    if (!aToB && !bToA) {
-      aToB = true;
-      bToA = fA.type === "sendreceive" || fB.type === "sendreceive";
-    }
+    const dir = resolveFolderDirections(fA, fB, instA.syncthingId, instB.syncthingId);
+    const aToB = dir.aToB;
+    const bToA = dir.bToA;
+    if (!aToB && !bToA) return;
 
     linkKeys[pairKey] = true;
     links.push({
@@ -339,6 +357,7 @@ function buildTopologyResponse(c) {
         if (!fA.id) continue;
         const fB = foldersB[fA.id];
         if (!fB) continue;
+        if (!folderShareConfigured(fA, fB, instA.syncthingId, instB.syncthingId)) continue;
         pushFolderLink(instA, instB, fA, fB);
       }
     }
@@ -420,13 +439,18 @@ function buildTopologyResponse(c) {
       const instA = managed[a];
       const instB = managed[b];
       const common = [];
-      const idsB = {};
+      const foldersByIdB = {};
       for (let i = 0; i < instB.folders.length; i++) {
-        if (instB.folders[i].id) idsB[instB.folders[i].id] = true;
+        const fb = instB.folders[i];
+        if (fb.id) foldersByIdB[fb.id] = fb;
       }
       for (let i = 0; i < instA.folders.length; i++) {
-        const id = instA.folders[i].id;
-        if (id && idsB[id]) common.push(id);
+        const fA = instA.folders[i];
+        const id = fA.id;
+        if (!id || !foldersByIdB[id]) continue;
+        const fB = foldersByIdB[id];
+        if (!folderShareConfigured(fA, fB, instA.syncthingId, instB.syncthingId)) continue;
+        common.push(id);
       }
       if (common.length) {
         pairDebug.push({
