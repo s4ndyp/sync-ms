@@ -18,13 +18,15 @@ trap cleanup INT TERM
 
 "$PB" migrate up \
   --dir="/app/pb_data" \
-  --migrationsDir="/app/pb_migrations"
+  --migrationsDir="/app/pb_migrations" \
+  --hooksDir="/app/pb_hooks"
 
 "$PB" serve \
   --http="0.0.0.0:8090" \
   --dir="/app/pb_data" \
   --publicDir="/app/pb_public" \
   --migrationsDir="/app/pb_migrations" \
+  --hooksDir="/app/pb_hooks" \
   --automigrate=false &
 PB_PID=$!
 

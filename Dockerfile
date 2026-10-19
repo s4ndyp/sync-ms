@@ -38,6 +38,7 @@ RUN curl -fsSL \
 
 COPY --from=collector /syncms-collector /usr/local/bin/syncms-collector
 COPY pb_migrations/ ./pb_migrations/
+COPY pb_hooks/ ./pb_hooks/
 COPY web/ ./pb_public/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 

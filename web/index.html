@@ -41,6 +41,7 @@
               </select>
             </label>
             <div class="segmented" role="tablist" aria-label="Periode">
+            <button type="button" data-range="8h">8 uur</button>
             <button type="button" data-range="24h" class="active">24 uur</button>
             <button type="button" data-range="7d">7 dagen</button>
             <button type="button" data-range="month">Maand</button>
@@ -58,8 +59,9 @@
       </section>
 
       <section class="panel">
-        <h2>Transfer speed (recent)</h2>
-        <div class="chart-wrap">
+        <h2>Transfer speed (laatste 8 uur)</h2>
+        <p class="hint small">480 metingen (1 per minuut); ontbrekende minuten = 0.</p>
+        <div class="chart-wrap chart-wrap-tall">
           <canvas id="speed-chart" height="100"></canvas>
         </div>
       </section>
@@ -94,6 +96,10 @@
           Maak in Syncthing onder <em>Instellingen → API</em> een key aan. Geen login op deze server —
           beveilig het netwerk (VPN / reverse proxy) indien nodig.
         </p>
+        <div class="dialog-test">
+          <button type="button" class="btn ghost" id="btn-test-connection">Verbinding testen</button>
+          <p id="test-connection-status" class="test-status" hidden></p>
+        </div>
         <div class="dialog-actions">
           <button type="button" class="btn ghost" id="btn-cancel">Annuleren</button>
           <button type="submit" class="btn primary">Opslaan</button>

@@ -288,6 +288,41 @@ code {
   min-height: 220px;
 }
 
+.chart-wrap-tall {
+  min-height: 260px;
+}
+
+.dialog-test {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.test-status {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.test-status.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-elev));
+}
+
+.test-status.err {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-elev));
+}
+
+.test-status.busy {
+  color: var(--muted);
+}
+
 dialog {
   border: 1px solid var(--line);
   border-radius: var(--radius);
