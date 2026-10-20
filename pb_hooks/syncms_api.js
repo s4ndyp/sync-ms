@@ -772,141 +772,150 @@ function upsertFolderShare(baseUrl, apiKey, folderId, label, folderPath, remoteD
   return { ok: false, error: "folder POST HTTP " + res.statusCode + (snippet ? " — " + snippet : "") };
 }
 
-function applyFolderShare(c) {
-  const sourceId = c.request.pathValue("instanceId");
+function remoteDeviceConfigured(baseUrl, apiKey, remoteDeviceId) {
+  if (!remoteDeviceId) return false;
+  const enc = encodeURIComponent(remoteDeviceId);
+  const existing = stRequest(baseUrl, apiKey, "/rest/config/devices/" + enc);
+  return existing.statusCode === 200;
+}
+
+/** Add or update a folder on one Syncthing instance (does not share with remote devices). */
+function applyAddFolder(c) {
+  const instanceId = c.request.pathValue("instanceId");
   const body = readJson(c);
   const folderId = sanitizeFolderId(body.folder_id || body.folderId);
   const label = String(body.label || folderId || "").trim();
-  const sourcePath = String(body.source_path || body.sourcePath || "").trim();
-  const partnerPath = String(body.partner_path || body.partnerPath || "").trim();
-  const partnerIds = body.partner_instance_ids || body.partnerInstanceIds || [];
+  const folderPath = String(body.source_path || body.sourcePath || body.path || "").trim();
 
   if (!folderId) {
     return c.json(400, { ok: false, error: "folder_id is verplicht" });
   }
-  if (!sourcePath) {
+  if (!folderPath) {
     return c.json(400, { ok: false, error: "source_path is verplicht (kies map in browser)" });
   }
-  if (!Array.isArray(partnerIds) || partnerIds.length === 0) {
-    return c.json(400, { ok: false, error: "Selecteer minimaal één partner-instance" });
+
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error });
   }
 
-  const sourceCred = loadInstanceCredentials(sourceId);
-  if (sourceCred.error) {
-    return c.json(400, { ok: false, error: sourceCred.error });
-  }
-
-  const sourceDevId = resolveSyncthingDeviceId(sourceCred);
-  if (!sourceDevId) {
-    return c.json(400, { ok: false, error: "syncthing_id onbekend op bron-instance" });
-  }
-
-  const partners = [];
-  for (let i = 0; i < partnerIds.length; i++) {
-    const pid = String(partnerIds[i] || "").trim();
-    if (!pid || pid === sourceId) continue;
-    const cred = loadInstanceCredentials(pid);
-    if (cred.error) {
-      return c.json(400, { ok: false, error: cred.error + " (partner)" });
-    }
-    const devId = resolveSyncthingDeviceId(cred);
-    if (!devId) {
-      return c.json(400, {
-        ok: false,
-        error: "syncthing_id onbekend op partner: " + cred.name,
-      });
-    }
-    partners.push({ cred: cred, deviceId: devId });
-  }
-
-  if (!partners.length) {
-    return c.json(400, { ok: false, error: "Geen geldige partners" });
-  }
-
-  const partnerDevIds = [];
-  for (let p = 0; p < partners.length; p++) {
-    partnerDevIds.push(partners[p].deviceId);
-  }
-
-  const steps = [];
-
-  for (let p = 0; p < partners.length; p++) {
-    const peer = partners[p];
-    const a = ensureRemoteDevice(sourceCred.baseUrl, sourceCred.apiKey, peer.deviceId, peer.cred.name);
-    if (!a.ok) {
-      return c.json(200, {
-        ok: false,
-        error: sourceCred.name + ": device " + peer.cred.name + " — " + a.error,
-        steps: steps,
-      });
-    }
-    const b = ensureRemoteDevice(peer.cred.baseUrl, peer.cred.apiKey, sourceDevId, sourceCred.name);
-    if (!b.ok) {
-      return c.json(200, {
-        ok: false,
-        error: peer.cred.name + ": device " + sourceCred.name + " — " + b.error,
-        steps: steps,
-      });
-    }
-  }
-
-  const onSource = upsertFolderShare(
-    sourceCred.baseUrl,
-    sourceCred.apiKey,
-    folderId,
-    label,
-    sourcePath,
-    partnerDevIds
-  );
-  steps.push({
-    instance: sourceCred.name,
-    role: "source",
-    ok: onSource.ok,
-    error: onSource.error || "",
-  });
-  if (!onSource.ok) {
-    return c.json(200, { ok: false, error: onSource.error, steps: steps });
-  }
-
-  const defaultPartnerPath = partnerPath || "~/" + folderId;
-
-  for (let p = 0; p < partners.length; p++) {
-    const peer = partners[p];
-    const customPath =
-      body.partner_paths && body.partner_paths[peer.cred.instanceId]
-        ? String(body.partner_paths[peer.cred.instanceId]).trim()
-        : defaultPartnerPath;
-    const onPeer = upsertFolderShare(
-      peer.cred.baseUrl,
-      peer.cred.apiKey,
-      folderId,
-      label,
-      customPath,
-      [sourceDevId]
-    );
-    steps.push({
-      instance: peer.cred.name,
-      role: "partner",
-      path: customPath,
-      ok: onPeer.ok,
-      error: onPeer.error || "",
-    });
-    if (!onPeer.ok) {
-      return c.json(200, {
-        ok: false,
-        error: peer.cred.name + ": " + onPeer.error,
-        steps: steps,
-        partial: true,
-      });
-    }
+  const onInst = upsertFolderShare(cred.baseUrl, cred.apiKey, folderId, label, folderPath, []);
+  if (!onInst.ok) {
+    return c.json(200, { ok: false, error: onInst.error, instance: cred.name });
   }
 
   return c.json(200, {
     ok: true,
     folderId: folderId,
     label: label,
-    sourcePath: sourcePath,
-    partnerPath: defaultPartnerPath,
+    path: folderPath,
+    existed: onInst.existed,
+    instance: cred.name,
+  });
+}
+
+/** Backward-compatible alias: same as add-folder (partners in body are ignored). */
+function applyFolderShare(c) {
+  return applyAddFolder(c);
+}
+
+function autoPairDevices(c) {
+  const records = listAllInstances();
+  const nodes = [];
+
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    if (rec.get("enabled") === false) continue;
+    const cred = loadInstanceCredentials(rec.id);
+    if (cred.error) {
+      return c.json(400, { ok: false, error: cred.error });
+    }
+    const deviceId = resolveSyncthingDeviceId(cred);
+    if (!deviceId) {
+      return c.json(400, {
+        ok: false,
+        error: "syncthing_id onbekend op instance: " + cred.name,
+      });
+    }
+    nodes.push({
+      cred: cred,
+      deviceId: deviceId,
+    });
+  }
+
+  const steps = [];
+  let pairsLinked = 0;
+  let pairsAlreadyLinked = 0;
+
+  for (let a = 0; a < nodes.length; a++) {
+    for (let b = a + 1; b < nodes.length; b++) {
+      const na = nodes[a];
+      const nb = nodes[b];
+      const aHasB = remoteDeviceConfigured(na.cred.baseUrl, na.cred.apiKey, nb.deviceId);
+      const bHasA = remoteDeviceConfigured(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId);
+
+      if (aHasB && bHasA) {
+        pairsAlreadyLinked++;
+        steps.push({
+          from: na.cred.name,
+          to: nb.cred.name,
+          action: "already_linked",
+          ok: true,
+        });
+        continue;
+      }
+
+      if (!aHasB) {
+        const r = ensureRemoteDevice(na.cred.baseUrl, na.cred.apiKey, nb.deviceId, nb.cred.name);
+        steps.push({
+          instance: na.cred.name,
+          remote: nb.cred.name,
+          direction: "add_device",
+          ok: r.ok,
+          error: r.error || "",
+        });
+        if (!r.ok) {
+          return c.json(200, {
+            ok: false,
+            error: na.cred.name + " → " + nb.cred.name + ": " + r.error,
+            steps: steps,
+          });
+        }
+      }
+
+      if (!bHasA) {
+        const r = ensureRemoteDevice(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId, na.cred.name);
+        steps.push({
+          instance: nb.cred.name,
+          remote: na.cred.name,
+          direction: "add_device",
+          ok: r.ok,
+          error: r.error || "",
+        });
+        if (!r.ok) {
+          return c.json(200, {
+            ok: false,
+            error: nb.cred.name + " → " + na.cred.name + ": " + r.error,
+            steps: steps,
+          });
+        }
+      }
+
+      pairsLinked++;
+      steps.push({
+        from: na.cred.name,
+        to: nb.cred.name,
+        action: "linked",
+        ok: true,
+      });
+    }
+  }
+
+  return c.json(200, {
+    ok: true,
+    instanceCount: nodes.length,
+    pairsLinked: pairsLinked,
+    pairsAlreadyLinked: pairsAlreadyLinked,
     steps: steps,
   });
 }
@@ -950,7 +959,7 @@ function instanceBrowse(c) {
       current: current,
       entries: entries,
       readOnly: true,
-      hint: "Browse read-only; gebruik fase B om sync toe te passen.",
+      hint: "Browse read-only; gebruik hieronder om een map aan Syncthing toe te voegen.",
     });
   } catch (err) {
     return c.json(200, {
@@ -1021,5 +1030,7 @@ module.exports = {
   restoreConfig,
   instanceBrowse,
   instanceFolders,
+  applyAddFolder,
   applyFolderShare,
+  autoPairDevices,
 };
