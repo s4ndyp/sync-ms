@@ -34,17 +34,7 @@
     <main class="layout">
       <section class="panel" id="overview-panel">
         <div class="panel-head overview-head">
-          <div class="overview-head-row">
-            <h2>Overzicht</h2>
-            <button
-              type="button"
-              id="btn-auto-pair-devices"
-              class="btn ghost btn-compact"
-              title="Voeg ontbrekende remote devices toe tussen alle enabled instances"
-            >
-              Devices automatisch koppelen
-            </button>
-          </div>
+          <h2>Overzicht</h2>
           <p class="hint small topology-legend">
             Pijlen = map gedeeld volgens Syncthing-config (folder → devices). <strong>Twee punten</strong> = bidirectioneel,
             <strong>één punt</strong> = enkelzijdig. Gestippeld = alleen live TCP-verbinding (geen map-match).
@@ -104,6 +94,24 @@
         </div>
       </section>
     </main>
+
+    <dialog id="pair-devices-dialog">
+      <form method="dialog" id="pair-devices-form">
+        <h3 id="pair-dialog-title">Devices koppelen</h3>
+        <p class="hint small" id="pair-dialog-lead">
+          Voeg ontbrekende remote devices toe tussen deze instance en de gekozen partners (beide kanten waar nodig).
+        </p>
+        <fieldset class="pair-partners-fieldset">
+          <legend>Partners</legend>
+          <ul class="share-partners-list" id="pair-partners-list"></ul>
+        </fieldset>
+        <p class="hint small pair-dialog-error" id="pair-dialog-error" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-pair-cancel">Annuleren</button>
+          <button type="button" class="btn primary" id="btn-pair-submit">Koppelen</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="instance-dialog">
       <form method="dialog" id="instance-form">

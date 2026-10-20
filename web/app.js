@@ -616,6 +616,14 @@ function rememberedBrowsePath(path) {
   return String(path || "").trim();
 }
 
+/** Folder path for add-folder from browse `current` (not at filesystem root listing). */
+function browseDirectoryAsFolderPath(current) {
+  if (isBrowseAtRoot(current)) return "";
+  const p = String(current).trim();
+  if (p === "~") return "~";
+  return p.replace(/[/\\]+$/, "");
+}
+
 /** Fill fase B fields from a saved browse path (full path + folder id = last segment). */
 function applyShareFieldsFromRememberedPath(instanceId, fullPath, force) {
   const path = rememberedBrowsePath(fullPath);
@@ -669,7 +677,7 @@ function setupAddFolderForm(inst) {
     const sourcePath = document.getElementById("share-source-path")?.value.trim();
 
     if (!sourcePath) {
-      alert('Kies een map en klik "Huidige map onthouden" (of selecteer in root + Geselecteerde map).');
+      alert("Kies een map in de browser (root: map in de lijst; dieper: blader naar de gewenste map).");
       return;
     }
     if (!folderId) {
@@ -725,44 +733,103 @@ function setupAddFolderForm(inst) {
   });
 }
 
-async function runAutoPairDevices() {
-  const enabled = state.instances.filter((i) => i.enabled !== false);
-  if (enabled.length < 2) {
-    alert("Minimaal twee enabled instances nodig om devices te koppelen.");
+let pairSourceInstanceId = null;
+
+function openPairDevicesDialog(inst) {
+  pairSourceInstanceId = inst.id;
+  const listEl = document.getElementById("pair-partners-list");
+  const leadEl = document.getElementById("pair-dialog-lead");
+  const titleEl = document.getElementById("pair-dialog-title");
+  const errEl = document.getElementById("pair-dialog-error");
+  if (titleEl) titleEl.textContent = `Devices koppelen — ${inst.name}`;
+  if (leadEl) {
+    leadEl.textContent =
+      "Vink partners aan. Sync-MS voegt ontbrekende remote devices toe op beide Syncthing-configs (API-key moet config mogen wijzigen).";
+  }
+  if (errEl) {
+    errEl.hidden = true;
+    errEl.textContent = "";
+  }
+
+  const others = state.instances.filter((i) => i.id !== inst.id && i.enabled !== false);
+  if (listEl) {
+    if (!others.length) {
+      listEl.innerHTML = `<li class="hint small">Geen andere enabled instances.</li>`;
+    } else {
+      listEl.innerHTML = others
+        .map((i) => {
+          const sid = i.syncthing_id ? "" : " (syncthing_id onbekend)";
+          return `<li><label class="share-partner"><input type="checkbox" name="pair-partner" value="${escapeAttr(i.id)}" /> ${escapeHtml(i.name)}${escapeHtml(sid)}</label></li>`;
+        })
+        .join("");
+    }
+  }
+
+  pairDialog?.showModal();
+}
+
+async function submitPairDevices() {
+  const errEl = document.getElementById("pair-dialog-error");
+  const sourceId = pairSourceInstanceId;
+  const source = state.instances.find((i) => i.id === sourceId);
+  if (!sourceId || !source) {
+    if (errEl) {
+      errEl.textContent = "Geen bron-instance geselecteerd.";
+      errEl.hidden = false;
+    }
     return;
   }
 
-  if (
-    !confirm(
-      `Remote devices automatisch koppelen?\n\nVoor elke paar enabled instances zonder onderlinge device-entry voegt Sync-MS het remote device toe (beide kanten waar nodig).\n\nInstances: ${enabled.map((i) => i.name).join(", ")}\n\nAPI-keys moeten config mogen wijzigen.`
-    )
-  ) {
+  const partnerIds = [];
+  document.querySelectorAll('#pair-partners-list input[name="pair-partner"]:checked').forEach((el) => {
+    partnerIds.push(el.value);
+  });
+  if (!partnerIds.length) {
+    if (errEl) {
+      errEl.textContent = "Selecteer minimaal één partner.";
+      errEl.hidden = false;
+    }
     return;
   }
 
-  const btn = document.getElementById("btn-auto-pair-devices");
+  const btn = document.getElementById("btn-pair-submit");
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Koppelen…";
   }
+  if (errEl) errEl.hidden = true;
+
   try {
-    const res = await pbRequest("/api/syncms/auto-pair-devices", { method: "POST", body: "{}" });
+    const res = await pbRequest("/api/syncms/auto-pair-devices", {
+      method: "POST",
+      body: JSON.stringify({
+        source_instance_id: sourceId,
+        partner_instance_ids: partnerIds,
+      }),
+    });
     if (!res.ok) {
       const fail = (res.steps || []).filter((s) => s.ok === false);
       const extra = fail.map((s) => `${s.instance || s.from}: ${s.error || ""}`).join("\n");
-      alert((res.error || "Koppelen mislukt") + (extra ? "\n\n" + extra : ""));
+      if (errEl) {
+        errEl.textContent = (res.error || "Koppelen mislukt") + (extra ? " — " + extra : "");
+        errEl.hidden = false;
+      }
       return;
     }
+    pairDialog?.close();
     alert(
-      `Klaar. ${res.pairsLinked} paar(en) gekoppeld, ${res.pairsAlreadyLinked} al gekoppeld (${res.instanceCount} instances).`
+      `${source.name}: ${res.pairsLinked} gekoppeld, ${res.pairsAlreadyLinked} had al een device-entry.`
     );
     await refresh();
   } catch (err) {
-    alert(`Koppelen mislukt: ${err.message}`);
+    if (errEl) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Devices automatisch koppelen";
+      btn.textContent = "Koppelen";
     }
   }
 }
@@ -783,7 +850,6 @@ async function loadBrowseDirectory(instanceId, current) {
   const pathEl = document.getElementById("browse-current-path");
   const listEl = document.getElementById("browse-entries");
   const errEl = document.getElementById("browse-error");
-  const selectBtn = document.getElementById("browse-btn-select");
 
   if (pathEl) pathEl.textContent = browsePathLabel(current);
   if (listEl) listEl.innerHTML = `<li class="hint small">Laden…</li>`;
@@ -846,8 +912,10 @@ async function loadBrowseDirectory(instanceId, current) {
     }
   }
 
-  if (selectBtn) {
-    selectBtn.disabled = isBrowseAtRoot(current);
+  const dirPath = browseDirectoryAsFolderPath(current);
+  if (dirPath) {
+    bs.selected = rememberedBrowsePath(dirPath);
+    applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
   }
 
   updateBrowseSelectedUi(instanceId);
@@ -863,7 +931,6 @@ function drillIntoSelectedPath(instanceId) {
 
 function setupFolderBrowse(inst) {
   const bs = getBrowseState(inst.id);
-  const selectBtn = document.getElementById("browse-btn-select");
   const selectedEl = document.getElementById("browse-selected-path");
 
   document.getElementById("browse-btn-home")?.addEventListener("click", () => {
@@ -885,15 +952,6 @@ function setupFolderBrowse(inst) {
     } finally {
       if (btn) btn.disabled = false;
     }
-  });
-
-  selectBtn?.addEventListener("click", () => {
-    if (isBrowseAtRoot(bs.current)) {
-      alert("Open eerst een map (niet root). Gebruik de lijst of Geselecteerde map om dieper te gaan.");
-      return;
-    }
-    const fullPath = rememberedBrowsePath(bs.current);
-    applyShareFieldsFromRememberedPath(inst.id, fullPath, true);
   });
 
   selectedEl?.addEventListener("click", () => {
@@ -947,13 +1005,12 @@ function renderInstanceFoldersPanel(inst) {
         Geselecteerde map:
         <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
       </p>
-      <p class="hint small">Root: kies map → klik <em>Geselecteerde map</em>. Omhoog = root.</p>
-      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden (vult bronpad + folder-ID)</button>
+      <p class="hint small">Root: kies een map in de lijst. Dieper: blader; bronpad volgt de geselecteerde map. Omhoog = root.</p>
       <p class="hint small browse-error" id="browse-error" hidden></p>
     </div>
 
     <h4 class="detail-subhead">Map toevoegen (Syncthing)</h4>
-    <p class="hint small">Voegt alleen een folder toe op <strong>${escapeHtml(inst.name)}</strong>. Delen met andere nodes doe je via <em>Devices automatisch koppelen</em> en daarna Syncthing (folder → devices).</p>
+    <p class="hint small">Voegt alleen een folder toe op <strong>${escapeHtml(inst.name)}</strong>. Koppel eerst devices (kolom instance) en deel daarna in Syncthing (folder → devices).</p>
     <form class="share-form" id="share-form" onsubmit="return false">
       <label class="share-field">Folder-ID (Syncthing)
         <input id="share-folder-id" name="folder_id" required maxlength="64" autocomplete="off" value="${escapeAttr(suggestedId)}" />
@@ -1006,6 +1063,9 @@ function renderInstanceDetail() {
         ? `<p class="hint small detail-error">${escapeHtml(inst.last_error || topoErr)}</p>`
         : ""
     }
+    <h4 class="detail-subhead">Syncthing-devices</h4>
+    <p class="hint small">Koppel deze instance aan gekozen partners (remote device in Syncthing-config).</p>
+    <button type="button" class="btn ghost btn-compact" id="detail-btn-pair-devices">Devices koppelen…</button>
     <div class="detail-actions">
       ${
         guiUrl
@@ -1018,6 +1078,7 @@ function renderInstanceDetail() {
 
   renderInstanceFoldersPanel(inst);
 
+  document.getElementById("detail-btn-pair-devices")?.addEventListener("click", () => openPairDevicesDialog(inst));
   document.getElementById("detail-btn-edit")?.addEventListener("click", () => openDialog(inst));
   document.getElementById("detail-btn-delete")?.addEventListener("click", async () => {
     if (!confirm(`Instance "${inst.name}" verwijderen?`)) return;
@@ -1239,6 +1300,7 @@ function setFooterStatus(text) {
 
 const dialog = document.getElementById("instance-dialog");
 const form = document.getElementById("instance-form");
+const pairDialog = document.getElementById("pair-devices-dialog");
 
 function setTestConnectionStatus(kind, message) {
   const el = document.getElementById("test-connection-status");
@@ -1297,7 +1359,8 @@ form.addEventListener("submit", async (e) => {
 document.getElementById("btn-cancel").addEventListener("click", () => dialog.close());
 document.getElementById("btn-add-instance").addEventListener("click", () => openDialog(null));
 document.getElementById("btn-refresh").addEventListener("click", () => refresh());
-document.getElementById("btn-auto-pair-devices")?.addEventListener("click", () => runAutoPairDevices());
+document.getElementById("btn-pair-cancel")?.addEventListener("click", () => pairDialog?.close());
+document.getElementById("btn-pair-submit")?.addEventListener("click", () => submitPairDevices());
 
 const restoreInput = document.getElementById("config-restore-file");
 
