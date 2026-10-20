@@ -12,3 +12,13 @@ routerAdd("GET", "/api/syncms/topology", (c) => {
   const api = require(`${__hooks}/syncms_api.js`);
   return api.topology(c);
 });
+
+routerAdd("GET", "/api/syncms/config/backup", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.backupConfig(c);
+});
+
+routerAdd("POST", "/api/syncms/config/restore", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.restoreConfig(c);
+});

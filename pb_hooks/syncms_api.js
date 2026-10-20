@@ -492,6 +492,95 @@ function buildTopologyResponse(c) {
   });
 }
 
+function backupConfig(c) {
+  const records = listAllInstances();
+  const instances = [];
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    instances.push({
+      name: String(rec.get("name") || "").trim(),
+      base_url: String(rec.get("base_url") || "").trim(),
+      api_key: String(rec.get("api_key") || "").trim(),
+      enabled: rec.get("enabled") !== false,
+    });
+  }
+  return c.json(200, {
+    syncms_backup_version: 1,
+    exported_at: new Date().toISOString(),
+    instances,
+  });
+}
+
+function restoreConfig(c) {
+  const body = readJson(c);
+  if (body.syncms_backup_version !== 1 || !Array.isArray(body.instances)) {
+    return c.json(400, {
+      ok: false,
+      error: "Ongeldig backup-bestand (syncms_backup_version: 1 en instances[] vereist).",
+    });
+  }
+
+  const existing = listAllInstances();
+  const byName = {};
+  for (let i = 0; i < existing.length; i++) {
+    const rec = existing[i];
+    const n = String(rec.get("name") || "")
+      .trim()
+      .toLowerCase();
+    if (n) byName[n] = rec;
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  const collection = $app.findCollectionByNameOrId("instances");
+
+  for (let j = 0; j < body.instances.length; j++) {
+    const item = body.instances[j] || {};
+    const name = String(item.name || "").trim();
+    const baseUrl = normalizeBaseUrl(item.base_url);
+    const apiKey = String(item.api_key || "").trim();
+    const enabled = item.enabled !== false;
+
+    if (!name || !baseUrl || !apiKey) {
+      skipped++;
+      continue;
+    }
+
+    const key = name.toLowerCase();
+    const prev = byName[key];
+    if (prev) {
+      prev.set("base_url", baseUrl);
+      prev.set("api_key", apiKey);
+      prev.set("enabled", enabled);
+      $app.save(prev);
+      updated++;
+    } else {
+      const rec = new Record(collection);
+      rec.set("name", name);
+      rec.set("base_url", baseUrl);
+      rec.set("api_key", apiKey);
+      rec.set("enabled", enabled);
+      rec.set("last_event_id", 0);
+      rec.set("online", false);
+      rec.set("sample_count", 0);
+      rec.set("in_bytes_alltime", 0);
+      rec.set("out_bytes_alltime", 0);
+      $app.save(rec);
+      byName[key] = rec;
+      created++;
+    }
+  }
+
+  return c.json(200, {
+    ok: true,
+    created,
+    updated,
+    skipped,
+    total: body.instances.length,
+  });
+}
+
 function topology(c) {
   try {
     return buildTopologyResponse(c);
@@ -515,4 +604,6 @@ function topology(c) {
 module.exports = {
   testConnection,
   topology,
+  backupConfig,
+  restoreConfig,
 };

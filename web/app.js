@@ -575,8 +575,8 @@ function renderInstanceDetail() {
       <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
     </div>
     <dl class="stat-grid detail-stats">
-      <dt>Totaal in</dt><dd>${formatBytes(inst.in_bytes_total)}</dd>
-      <dt>Totaal out</dt><dd>${formatBytes(inst.out_bytes_total)}</dd>
+      <dt>Totaal in</dt><dd>${formatBytes(bytesAlltimeIn(inst))}</dd>
+      <dt>Totaal out</dt><dd>${formatBytes(bytesAlltimeOut(inst))}</dd>
       <dt>Snelheid in</dt><dd>${formatSpeed(inst.in_speed_bps)}</dd>
       <dt>Snelheid out</dt><dd>${formatSpeed(inst.out_speed_bps)}</dd>
       <dt>Versie</dt><dd>${escapeHtml(inst.version || "—")}</dd>
@@ -584,6 +584,7 @@ function renderInstanceDetail() {
       <dt>Laatst gezien</dt><dd>${formatWhen(inst.last_seen)}</dd>
       <dt>API URL</dt><dd class="mono wrap">${escapeHtml(guiUrl || "—")}</dd>
     </dl>
+    <p class="hint small">Totaal in/out = som van alle metingen sinds monitoring (niet alleen laatste poll).</p>
     ${
       inst.last_error || topoErr
         ? `<p class="hint small detail-error">${escapeHtml(inst.last_error || topoErr)}</p>`
@@ -692,6 +693,31 @@ function formatWhen(s) {
   return d.toLocaleString();
 }
 
+/** Cumulative bytes since Sync-MS monitoring (sum of sample deltas). */
+function bytesAlltimeIn(inst) {
+  if (inst.in_bytes_alltime != null && !Number.isNaN(Number(inst.in_bytes_alltime))) {
+    return Number(inst.in_bytes_alltime);
+  }
+  return Number(inst.in_bytes_total) || 0;
+}
+
+function bytesAlltimeOut(inst) {
+  if (inst.out_bytes_alltime != null && !Number.isNaN(Number(inst.out_bytes_alltime))) {
+    return Number(inst.out_bytes_alltime);
+  }
+  return Number(inst.out_bytes_total) || 0;
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const dialog = document.getElementById("instance-dialog");
 const form = document.getElementById("instance-form");
 
@@ -752,6 +778,56 @@ form.addEventListener("submit", async (e) => {
 document.getElementById("btn-cancel").addEventListener("click", () => dialog.close());
 document.getElementById("btn-add-instance").addEventListener("click", () => openDialog(null));
 document.getElementById("btn-refresh").addEventListener("click", () => refresh());
+
+document.getElementById("btn-config-backup").addEventListener("click", async () => {
+  try {
+    const data = await pbRequest("/api/syncms/config/backup");
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadJson(`sync-ms-config-${stamp}.json`, data);
+  } catch (err) {
+    alert(`Backup mislukt: ${err.message}`);
+  }
+});
+
+const restoreInput = document.getElementById("config-restore-file");
+document.getElementById("btn-config-restore").addEventListener("click", () => {
+  restoreInput.value = "";
+  restoreInput.click();
+});
+
+restoreInput.addEventListener("change", async () => {
+  const file = restoreInput.files?.[0];
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (_) {
+    alert("Geen geldig JSON-bestand.");
+    return;
+  }
+  const n = Array.isArray(parsed.instances) ? parsed.instances.length : 0;
+  if (
+    !confirm(
+      `Restore uit "${file.name}"?\n\n${n} instance(s). Bestaande namen worden overschreven (URL + API key). Statistieken blijven behouden.`
+    )
+  ) {
+    return;
+  }
+  try {
+    const res = await pbRequest("/api/syncms/config/restore", {
+      method: "POST",
+      body: JSON.stringify(parsed),
+    });
+    if (!res.ok) {
+      alert(res.error || "Restore mislukt");
+      return;
+    }
+    alert(`Restore OK — ${res.created} nieuw, ${res.updated} bijgewerkt${res.skipped ? `, ${res.skipped} overgeslagen` : ""}.`);
+    await refresh();
+  } catch (err) {
+    alert(`Restore mislukt: ${err.message}`);
+  }
+});
 
 document.getElementById("btn-test-connection").addEventListener("click", async () => {
   const baseUrl = form.base_url.value.trim();
