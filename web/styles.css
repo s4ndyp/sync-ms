@@ -156,18 +156,6 @@ code {
   font-size: 0.78rem;
 }
 
-.overview-head-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem 1rem;
-  justify-content: space-between;
-}
-
-.overview-head-row h2 {
-  margin: 0;
-}
-
 .overview-head {
   margin-bottom: 0.5rem;
 }
@@ -423,6 +411,27 @@ code {
   border: 1px solid var(--line);
   background: var(--bg-elev);
   color: var(--text);
+}
+
+.pair-partners-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem 0.65rem;
+}
+
+.pair-partners-fieldset legend {
+  font-size: 0.82rem;
+  padding: 0 0.35rem;
+}
+
+.pair-dialog-error {
+  color: var(--danger);
+  margin: 0.5rem 0 0;
+}
+
+.detail-subhead {
+  margin-top: 1rem;
 }
 
 .share-partners-fieldset {

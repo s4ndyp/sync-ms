@@ -819,100 +819,145 @@ function applyFolderShare(c) {
   return applyAddFolder(c);
 }
 
+function loadSyncthingNode(instanceId) {
+  let rec;
+  try {
+    rec = $app.findRecordById("instances", instanceId);
+  } catch (_) {
+    return { error: "Instance niet gevonden: " + instanceId };
+  }
+  if (rec.get("enabled") === false) {
+    return { error: "Instance uitgeschakeld: " + (rec.get("name") || instanceId) };
+  }
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) return { error: cred.error };
+  const deviceId = resolveSyncthingDeviceId(cred);
+  if (!deviceId) {
+    return { error: "syncthing_id onbekend op instance: " + cred.name };
+  }
+  return { cred: cred, deviceId: deviceId };
+}
+
+function linkTwoSyncthingNodes(na, nb, steps) {
+  const aHasB = remoteDeviceConfigured(na.cred.baseUrl, na.cred.apiKey, nb.deviceId);
+  const bHasA = remoteDeviceConfigured(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId);
+
+  if (aHasB && bHasA) {
+    steps.push({
+      from: na.cred.name,
+      to: nb.cred.name,
+      action: "already_linked",
+      ok: true,
+    });
+    return { ok: true, linked: false, alreadyLinked: true };
+  }
+
+  if (!aHasB) {
+    const r = ensureRemoteDevice(na.cred.baseUrl, na.cred.apiKey, nb.deviceId, nb.cred.name);
+    steps.push({
+      instance: na.cred.name,
+      remote: nb.cred.name,
+      direction: "add_device",
+      ok: r.ok,
+      error: r.error || "",
+    });
+    if (!r.ok) {
+      return { ok: false, error: na.cred.name + " → " + nb.cred.name + ": " + r.error };
+    }
+  }
+
+  if (!bHasA) {
+    const r = ensureRemoteDevice(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId, na.cred.name);
+    steps.push({
+      instance: nb.cred.name,
+      remote: na.cred.name,
+      direction: "add_device",
+      ok: r.ok,
+      error: r.error || "",
+    });
+    if (!r.ok) {
+      return { ok: false, error: nb.cred.name + " → " + na.cred.name + ": " + r.error };
+    }
+  }
+
+  steps.push({
+    from: na.cred.name,
+    to: nb.cred.name,
+    action: "linked",
+    ok: true,
+  });
+  return { ok: true, linked: true, alreadyLinked: false };
+}
+
 function autoPairDevices(c) {
+  const body = readJson(c);
+  const sourceId = String(body.source_instance_id || body.sourceInstanceId || "").trim();
+  const partnerIdsRaw = body.partner_instance_ids || body.partnerInstanceIds;
+
+  const steps = [];
+  let pairsLinked = 0;
+  let pairsAlreadyLinked = 0;
+
+  if (sourceId && Array.isArray(partnerIdsRaw) && partnerIdsRaw.length > 0) {
+    const sourceNode = loadSyncthingNode(sourceId);
+    if (sourceNode.error) {
+      return c.json(400, { ok: false, error: sourceNode.error });
+    }
+
+    for (let i = 0; i < partnerIdsRaw.length; i++) {
+      const pid = String(partnerIdsRaw[i] || "").trim();
+      if (!pid || pid === sourceId) continue;
+      const partnerNode = loadSyncthingNode(pid);
+      if (partnerNode.error) {
+        return c.json(400, { ok: false, error: partnerNode.error });
+      }
+      const result = linkTwoSyncthingNodes(sourceNode, partnerNode, steps);
+      if (!result.ok) {
+        return c.json(200, { ok: false, error: result.error, steps: steps });
+      }
+      if (result.alreadyLinked) pairsAlreadyLinked++;
+      else if (result.linked) pairsLinked++;
+    }
+
+    return c.json(200, {
+      ok: true,
+      mode: "selected",
+      sourceInstanceId: sourceId,
+      sourceName: sourceNode.cred.name,
+      partnerCount: partnerIdsRaw.length,
+      pairsLinked: pairsLinked,
+      pairsAlreadyLinked: pairsAlreadyLinked,
+      steps: steps,
+    });
+  }
+
   const records = listAllInstances();
   const nodes = [];
 
   for (let i = 0; i < records.length; i++) {
     const rec = records[i];
     if (rec.get("enabled") === false) continue;
-    const cred = loadInstanceCredentials(rec.id);
-    if (cred.error) {
-      return c.json(400, { ok: false, error: cred.error });
+    const node = loadSyncthingNode(rec.id);
+    if (node.error) {
+      return c.json(400, { ok: false, error: node.error });
     }
-    const deviceId = resolveSyncthingDeviceId(cred);
-    if (!deviceId) {
-      return c.json(400, {
-        ok: false,
-        error: "syncthing_id onbekend op instance: " + cred.name,
-      });
-    }
-    nodes.push({
-      cred: cred,
-      deviceId: deviceId,
-    });
+    nodes.push(node);
   }
-
-  const steps = [];
-  let pairsLinked = 0;
-  let pairsAlreadyLinked = 0;
 
   for (let a = 0; a < nodes.length; a++) {
     for (let b = a + 1; b < nodes.length; b++) {
-      const na = nodes[a];
-      const nb = nodes[b];
-      const aHasB = remoteDeviceConfigured(na.cred.baseUrl, na.cred.apiKey, nb.deviceId);
-      const bHasA = remoteDeviceConfigured(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId);
-
-      if (aHasB && bHasA) {
-        pairsAlreadyLinked++;
-        steps.push({
-          from: na.cred.name,
-          to: nb.cred.name,
-          action: "already_linked",
-          ok: true,
-        });
-        continue;
+      const result = linkTwoSyncthingNodes(nodes[a], nodes[b], steps);
+      if (!result.ok) {
+        return c.json(200, { ok: false, error: result.error, steps: steps });
       }
-
-      if (!aHasB) {
-        const r = ensureRemoteDevice(na.cred.baseUrl, na.cred.apiKey, nb.deviceId, nb.cred.name);
-        steps.push({
-          instance: na.cred.name,
-          remote: nb.cred.name,
-          direction: "add_device",
-          ok: r.ok,
-          error: r.error || "",
-        });
-        if (!r.ok) {
-          return c.json(200, {
-            ok: false,
-            error: na.cred.name + " → " + nb.cred.name + ": " + r.error,
-            steps: steps,
-          });
-        }
-      }
-
-      if (!bHasA) {
-        const r = ensureRemoteDevice(nb.cred.baseUrl, nb.cred.apiKey, na.deviceId, na.cred.name);
-        steps.push({
-          instance: nb.cred.name,
-          remote: na.cred.name,
-          direction: "add_device",
-          ok: r.ok,
-          error: r.error || "",
-        });
-        if (!r.ok) {
-          return c.json(200, {
-            ok: false,
-            error: nb.cred.name + " → " + na.cred.name + ": " + r.error,
-            steps: steps,
-          });
-        }
-      }
-
-      pairsLinked++;
-      steps.push({
-        from: na.cred.name,
-        to: nb.cred.name,
-        action: "linked",
-        ok: true,
-      });
+      if (result.alreadyLinked) pairsAlreadyLinked++;
+      else if (result.linked) pairsLinked++;
     }
   }
 
   return c.json(200, {
     ok: true,
+    mode: "all",
     instanceCount: nodes.length,
     pairsLinked: pairsLinked,
     pairsAlreadyLinked: pairsAlreadyLinked,
