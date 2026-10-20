@@ -191,36 +191,143 @@ code {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) - 4px);
-  padding: 1rem;
-  min-height: 420px;
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
   min-width: 0;
 }
 
+.instance-detail {
+  padding: 1rem;
+  min-height: 420px;
+  gap: 0.65rem;
+}
+
 .instance-stats {
-  max-height: min(560px, 70vh);
-  overflow: auto;
+  overflow: visible;
+  min-height: 0;
+  padding: 0.75rem;
+  gap: 0.5rem;
 }
 
 .stats-col-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.instance-stats-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 0;
+}
+
+.instance-stats-block + .instance-stats-block {
+  margin-top: 0.15rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--line);
+}
+
+.detail-subhead.compact {
+  margin: 0;
+  font-size: 0.78rem;
   font-weight: 600;
 }
 
-.instance-period-block {
-  margin-top: 0.35rem;
+.folder-list-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 6.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.period-stats {
+.folder-item-compact {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  background: var(--card);
+  font-size: 0.74rem;
+}
+
+.folder-item-compact summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-item-compact summary::-webkit-details-marker {
+  display: none;
+}
+
+.folder-item-compact summary::before {
+  content: "▸ ";
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.folder-item-compact[open] summary::before {
+  content: "▾ ";
+}
+
+.folder-item-compact code {
+  font-size: 0.72rem;
+}
+
+.folder-label {
+  color: var(--muted);
+}
+
+.folder-path {
+  margin: 0.25rem 0 0.1rem;
+  font-size: 0.68rem;
+  word-break: break-all;
+}
+
+.folder-list-empty {
   margin: 0;
-  font-size: 0.82rem;
 }
 
-.period-stats dd {
+.transfer-period-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.transfer-period-table th,
+.transfer-period-table td {
+  padding: 0.15rem 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.transfer-period-table thead th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.transfer-period-table tbody th {
+  font-weight: 500;
+  text-align: left;
+}
+
+.transfer-period-table td.num {
+  text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stats-footnote {
+  margin: 0.2rem 0 0;
+}
+
+.hint.tiny {
+  font-size: 0.68rem;
 }
 
 .detail-head {
@@ -806,6 +913,5 @@ dialog label.checkbox {
   .instance-detail,
   .instance-stats {
     min-height: auto;
-    max-height: none;
   }
 }
