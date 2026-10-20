@@ -744,21 +744,60 @@ function setupFolderBrowse(inst) {
   }
 }
 
+function renderInstanceFoldersPanel(inst) {
+  const panel = document.getElementById("instance-folders");
+  if (!panel) return;
+
+  if (!inst) {
+    panel.innerHTML = `<p class="hint">Mapinfo verschijnt hier na selectie.</p>`;
+    return;
+  }
+
+  const folders = state.foldersByInstance[inst.id] || [];
+  const foldersHtml = buildFolderListHtml(folders);
+  const bs = getBrowseState(inst.id);
+
+  panel.innerHTML = `
+    <h3 class="folders-col-title">Mappen — ${escapeHtml(inst.name)}</h3>
+    <h4 class="detail-subhead">Geconfigureerd (Syncthing)</h4>
+    <div id="detail-folder-config">${foldersHtml}</div>
+    <button type="button" class="btn ghost btn-compact" id="detail-btn-refresh-folders">Vernieuw mappenlijst</button>
+
+    <h4 class="detail-subhead">Pad verkennen (fase A)</h4>
+    <p class="hint small">Blader op deze Syncthing-host. Alleen lezen.</p>
+    <div class="folder-browse">
+      <div class="browse-toolbar">
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-home" title="Home directory">~ Home</button>
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-up">Omhoog</button>
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-reload">Herlaad</button>
+      </div>
+      <p class="browse-current mono wrap" id="browse-current-path">${escapeHtml(browsePathLabel(bs.current))}</p>
+      <ul class="browse-entries" id="browse-entries"><li class="hint small">Laden…</li></ul>
+      <p class="hint small browse-selected">
+        Geselecteerde map:
+        <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
+      </p>
+      <p class="hint small">Root: kies map → klik <em>Geselecteerde map</em>. Omhoog = root.</p>
+      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden</button>
+      <p class="hint small browse-error" id="browse-error" hidden></p>
+    </div>`;
+
+  setupFolderBrowse(inst);
+}
+
 function renderInstanceDetail() {
   const panel = document.getElementById("instance-detail");
   const inst = state.instances.find((i) => i.id === state.selectedInstanceId);
 
   if (!inst) {
     panel.innerHTML = `<p class="hint">Selecteer een instance in het diagram.</p>`;
+    renderInstanceFoldersPanel(null);
     return;
   }
 
   const topoErr = state.topoErrors[inst.id] || state.topoErrors.__hook;
   const guiUrl = (inst.base_url || "").trim();
   const online = inst.online;
-  const folders = state.foldersByInstance[inst.id] || [];
-  const foldersHtml = buildFolderListHtml(folders);
-  const bs = getBrowseState(inst.id);
 
   panel.innerHTML = `
     <div class="detail-head">
@@ -781,29 +820,6 @@ function renderInstanceDetail() {
         ? `<p class="hint small detail-error">${escapeHtml(inst.last_error || topoErr)}</p>`
         : ""
     }
-    <h4 class="detail-subhead">Geconfigureerde mappen (Syncthing)</h4>
-    <div id="detail-folder-config">${foldersHtml}</div>
-    <button type="button" class="btn ghost btn-compact" id="detail-btn-refresh-folders">Vernieuw mappenlijst</button>
-
-    <h4 class="detail-subhead">Pad verkennen (fase A)</h4>
-    <p class="hint small">Blader op <strong>deze</strong> Syncthing-host (remote API). Alleen lezen — sync naar partners volgt later.</p>
-    <div class="folder-browse">
-      <div class="browse-toolbar">
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-home" title="Home directory">~ Home</button>
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-up">Omhoog</button>
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-reload">Herlaad</button>
-      </div>
-      <p class="browse-current mono wrap" id="browse-current-path">${escapeHtml(browsePathLabel(bs.current))}</p>
-      <ul class="browse-entries" id="browse-entries"><li class="hint small">Laden…</li></ul>
-      <p class="hint small browse-selected">
-        Geselecteerde map:
-        <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
-      </p>
-      <p class="hint small">In root: kies een map in de lijst, klik dan op <em>Geselecteerde map</em>. <em>Omhoog</em> = terug naar root.</p>
-      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden</button>
-      <p class="hint small browse-error" id="browse-error" hidden></p>
-    </div>
-
     <div class="detail-actions">
       ${
         guiUrl
@@ -814,7 +830,7 @@ function renderInstanceDetail() {
       <button type="button" class="btn danger" id="detail-btn-delete">Verwijderen</button>
     </div>`;
 
-  setupFolderBrowse(inst);
+  renderInstanceFoldersPanel(inst);
 
   document.getElementById("detail-btn-edit")?.addEventListener("click", () => openDialog(inst));
   document.getElementById("detail-btn-delete")?.addEventListener("click", async () => {
