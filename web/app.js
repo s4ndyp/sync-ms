@@ -3,15 +3,13 @@ const state = {
   topology: { links: [] },
   nodeLayout: {},
   topoErrors: {},
-  foldersByInstance: {},
+  instanceTransferStats: {},
   selectedInstanceId: null,
   range: "24h",
   chartInstance: "",
   editingId: null,
   transferChart: null,
   speedChart: null,
-  /** @type {Record<string, { current: string, selected: string }>} */
-  folderBrowseByInstance: {},
 };
 
 const TOPO_W = 1000;
@@ -92,8 +90,116 @@ function rangeStart(range) {
       return new Date(now.getTime() - 7 * 24 * 3600 * 1000);
     case "month":
       return new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+    case "31d":
+      return new Date(now.getTime() - 31 * 24 * 3600 * 1000);
     default:
       return new Date(0);
+  }
+}
+
+function sumTransferRows(rows) {
+  let inBytes = 0;
+  let outBytes = 0;
+  for (const row of rows) {
+    inBytes += Number(row.in_bytes_delta) || 0;
+    outBytes += Number(row.out_bytes_delta) || 0;
+  }
+  return { inBytes, outBytes };
+}
+
+function instanceTransferFilter(instanceId, from, useHourly) {
+  const timeField = useHourly ? "bucket_start" : "recorded_at";
+  return `instance = "${instanceId}" && ${timeField} >= "${toPbFilterDate(from)}"`;
+}
+
+async function loadInstanceTransferStats(instanceId) {
+  const from24 = rangeStart("24h");
+  const from7 = rangeStart("7d");
+  const from31 = rangeStart("31d");
+
+  const [rows24, rows7, rows31] = await Promise.all([
+    listAll("transfer_samples", {
+      filter: instanceTransferFilter(instanceId, from24, false),
+      sort: "recorded_at",
+    }),
+    listAll("transfer_samples", {
+      filter: instanceTransferFilter(instanceId, from7, false),
+      sort: "recorded_at",
+    }),
+    listAll("transfer_hourly", {
+      filter: instanceTransferFilter(instanceId, from31, true),
+      sort: "bucket_start",
+    }),
+  ]);
+
+  return {
+    h24: sumTransferRows(rows24),
+    d7: sumTransferRows(rows7),
+    d31: sumTransferRows(rows31),
+  };
+}
+
+function buildInstancePeriodStatsHtml(label, totals) {
+  return `
+    <section class="instance-period-block">
+      <h4 class="detail-subhead">${escapeHtml(label)}</h4>
+      <dl class="stat-grid period-stats">
+        <dt>Ontvangen</dt><dd>${formatBytes(totals.inBytes)}</dd>
+        <dt>Verzonden</dt><dd>${formatBytes(totals.outBytes)}</dd>
+      </dl>
+    </section>`;
+}
+
+function renderInstanceStatsBody(stats) {
+  return (
+    buildInstancePeriodStatsHtml("Laatste 24 uur", stats.h24) +
+    buildInstancePeriodStatsHtml("Laatste 7 dagen", stats.d7) +
+    buildInstancePeriodStatsHtml("Laatste 31 dagen", stats.d31)
+  );
+}
+
+function renderInstanceStatsPanel(inst) {
+  const panel = document.getElementById("instance-stats");
+  if (!panel) return;
+
+  if (!inst) {
+    panel.innerHTML = `<p class="hint">Transfer-statistieken verschijnen hier na selectie.</p>`;
+    return;
+  }
+
+  panel.innerHTML = `
+    <h3 class="stats-col-title">Transfer — ${escapeHtml(inst.name)}</h3>
+    <p class="hint small">Som van gemeten deltas (collector). 31 dagen via uuraggregatie.</p>
+    <div id="instance-stats-body"><p class="hint small">Laden…</p></div>
+    <button type="button" class="btn ghost btn-compact" id="instance-stats-refresh">Vernieuwen</button>`;
+
+  document.getElementById("instance-stats-refresh")?.addEventListener("click", () => {
+    delete state.instanceTransferStats[inst.id];
+    loadAndShowInstanceStats(inst, true);
+  });
+
+  loadAndShowInstanceStats(inst, false);
+}
+
+async function loadAndShowInstanceStats(inst, force) {
+  const body = document.getElementById("instance-stats-body");
+  if (!body || state.selectedInstanceId !== inst.id) return;
+
+  const cached = state.instanceTransferStats[inst.id];
+  if (!force && cached?.stats) {
+    body.innerHTML = renderInstanceStatsBody(cached.stats);
+    return;
+  }
+
+  body.innerHTML = `<p class="hint small">Laden…</p>`;
+  try {
+    const stats = await loadInstanceTransferStats(inst.id);
+    if (state.selectedInstanceId !== inst.id) return;
+    state.instanceTransferStats[inst.id] = { stats, fetchedAt: Date.now() };
+    body.innerHTML = renderInstanceStatsBody(stats);
+  } catch (err) {
+    if (state.selectedInstanceId !== inst.id) return;
+    body.innerHTML = `<p class="hint small detail-error">${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -537,202 +643,6 @@ function renderTopologyNodes(instances, layout) {
   });
 }
 
-function buildFolderListHtml(folders) {
-  if (!folders.length) {
-    return `<p class="hint small">Nog geen mappen geladen. Klik op <em>Vernieuw mappenlijst</em>.</p>`;
-  }
-  return `<div class="folder-list">${folders
-    .map((f) => {
-      const shared = (f.sharedWith || [])
-        .map((s) =>
-          s.instanceName
-            ? `<strong>${escapeHtml(s.instanceName)}</strong>`
-            : escapeHtml(s.deviceName || s.deviceId || "")
-        )
-        .join(", ");
-      return `<details class="folder-item"><summary><code>${escapeHtml(f.id)}</code> — ${escapeHtml(f.label || f.id)}</summary>
-        <dl class="stat-grid folder-meta">
-          <dt>Locatie</dt><dd class="mono wrap">${escapeHtml(f.path || "—")}</dd>
-          <dt>Soort</dt><dd>${escapeHtml(f.typeLabel || f.type || "—")}</dd>
-          <dt>Gedeeld met</dt><dd class="wrap">${shared || "—"}</dd>
-        </dl></details>`;
-    })
-    .join("")}</div>`;
-}
-
-function getBrowseState(instanceId) {
-  if (!state.folderBrowseByInstance[instanceId]) {
-    state.folderBrowseByInstance[instanceId] = { current: "", selected: "" };
-  }
-  return state.folderBrowseByInstance[instanceId];
-}
-
-function isBrowseAtRoot(current) {
-  return current === "" || current === null || current === undefined;
-}
-
-function browsePathLabel(current) {
-  if (isBrowseAtRoot(current)) return "(root — kies een map, klik daarna op Geselecteerde map om erin te gaan)";
-  return current;
-}
-
-/** Syncthing browse expects directory paths; trailing separator helps list children. */
-function normalizeBrowseCurrent(path) {
-  if (isBrowseAtRoot(path)) return "";
-  const p = String(path);
-  if (p === "~") return "~";
-  if (p.endsWith("/") || p.endsWith("\\")) return p;
-  if (/^[A-Za-z]:\\?/.test(p)) {
-    return p.replace(/\/?$/, "\\");
-  }
-  if (p.startsWith("/")) return p + "/";
-  return p + "/";
-}
-
-function pathsBrowseEqual(a, b) {
-  return normalizeBrowseCurrent(a) === normalizeBrowseCurrent(b);
-}
-
-function updateBrowseSelectedUi(instanceId) {
-  const bs = getBrowseState(instanceId);
-  const selectedBtn = document.getElementById("browse-selected-path");
-  if (selectedBtn) {
-    selectedBtn.textContent = bs.selected || "—";
-    selectedBtn.disabled = !bs.selected;
-  }
-  syncShareFormFromBrowse(instanceId);
-}
-
-/** Last path segment (selected folder name), e.g. /srv/sync/xdio → xdio */
-function lastPathSegmentName(path) {
-  if (!path || path === "~") return "";
-  const p = String(path).trim().replace(/[/\\]+$/, "");
-  const parts = p.split(/[/\\]/).filter(Boolean);
-  if (!parts.length) return "";
-  return parts[parts.length - 1];
-}
-
-function rememberedBrowsePath(path) {
-  return String(path || "").trim();
-}
-
-/** Folder path for add-folder from browse `current` (not at filesystem root listing). */
-function browseDirectoryAsFolderPath(current) {
-  if (isBrowseAtRoot(current)) return "";
-  const p = String(current).trim();
-  if (p === "~") return "~";
-  return p.replace(/[/\\]+$/, "");
-}
-
-/** Fill fase B fields from a saved browse path (full path + folder id = last segment). */
-function applyShareFieldsFromRememberedPath(instanceId, fullPath, force) {
-  const path = rememberedBrowsePath(fullPath);
-  if (!path) return;
-  const seg = lastPathSegmentName(path);
-  const pathInput = document.getElementById("share-source-path");
-  const idInput = document.getElementById("share-folder-id");
-  const labelInput = document.getElementById("share-folder-label");
-
-  if (pathInput) pathInput.value = path;
-
-  if (idInput && (force || idInput.dataset.userEdited !== "1")) {
-    idInput.value = seg.slice(0, 64);
-    if (force) idInput.dataset.userEdited = "0";
-  }
-  if (labelInput && (force || labelInput.dataset.userEdited !== "1")) {
-    labelInput.value = seg.slice(0, 120);
-    if (force) labelInput.dataset.userEdited = "0";
-  }
-
-  const bs = getBrowseState(instanceId);
-  bs.selected = path;
-  const selectedBtn = document.getElementById("browse-selected-path");
-  if (selectedBtn) {
-    selectedBtn.textContent = path;
-    selectedBtn.disabled = false;
-  }
-}
-
-function syncShareFormFromBrowse(instanceId) {
-  const bs = getBrowseState(instanceId);
-  if (!bs.selected) return;
-  applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
-}
-
-function setupAddFolderForm(inst) {
-  const idInput = document.getElementById("share-folder-id");
-  const labelInput = document.getElementById("share-folder-label");
-  idInput?.addEventListener("input", () => {
-    if (idInput) idInput.dataset.userEdited = "1";
-  });
-  labelInput?.addEventListener("input", () => {
-    if (labelInput) labelInput.dataset.userEdited = "1";
-  });
-
-  syncShareFormFromBrowse(inst.id);
-
-  document.getElementById("btn-add-folder")?.addEventListener("click", async () => {
-    const folderId = document.getElementById("share-folder-id")?.value.trim();
-    const label = document.getElementById("share-folder-label")?.value.trim();
-    const sourcePath = document.getElementById("share-source-path")?.value.trim();
-
-    if (!sourcePath) {
-      alert("Kies een map in de browser (root: map in de lijst; dieper: blader naar de gewenste map).");
-      return;
-    }
-    if (!folderId) {
-      alert("Vul een folder-ID in (Syncthing map-id).");
-      return;
-    }
-
-    if (
-      !confirm(
-        `Map toevoegen aan Syncthing?\n\nInstance: ${inst.name}\nFolder-ID: ${folderId}\nPad: ${sourcePath}\n\nDe map wordt niet automatisch gedeeld met andere devices — koppel devices eerst of deel in de Syncthing GUI.\n\nAPI-key moet config mogen wijzigen.`
-      )
-    ) {
-      return;
-    }
-
-    const btn = document.getElementById("btn-add-folder");
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "Toevoegen…";
-    }
-    try {
-      const res = await pbRequest(
-        `/api/syncms/instances/${encodeURIComponent(inst.id)}/add-folder`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            folder_id: folderId,
-            label: label || folderId,
-            source_path: sourcePath,
-          }),
-        }
-      );
-      if (!res.ok) {
-        alert(res.error || "Map toevoegen mislukt");
-        return;
-      }
-      alert(
-        res.existed
-          ? `Map "${res.folderId}" bijgewerkt op ${res.instance}.`
-          : `Map "${res.folderId}" toegevoegd op ${res.instance}.`
-      );
-      await refreshInstanceFolders(inst.id);
-      const topology = await loadTopology();
-      renderOverview(topology);
-    } catch (err) {
-      alert(`Map toevoegen mislukt: ${err.message}`);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "Map toevoegen aan Syncthing";
-      }
-    }
-  });
-}
-
 let pairSourceInstanceId = null;
 
 function openPairDevicesDialog(inst) {
@@ -834,207 +744,13 @@ async function submitPairDevices() {
   }
 }
 
-async function refreshInstanceFolders(instanceId) {
-  const data = await pbRequest(`/api/syncms/instances/${encodeURIComponent(instanceId)}/folders`);
-  if (data.folders) state.foldersByInstance[instanceId] = data.folders;
-  const el = document.getElementById("detail-folder-config");
-  if (el && state.selectedInstanceId === instanceId) {
-    el.innerHTML = buildFolderListHtml(data.folders || []);
-  }
-  return data;
-}
-
-async function loadBrowseDirectory(instanceId, current) {
-  const bs = getBrowseState(instanceId);
-  bs.current = current;
-  const pathEl = document.getElementById("browse-current-path");
-  const listEl = document.getElementById("browse-entries");
-  const errEl = document.getElementById("browse-error");
-
-  if (pathEl) pathEl.textContent = browsePathLabel(current);
-  if (listEl) listEl.innerHTML = `<li class="hint small">Laden…</li>`;
-  if (errEl) {
-    errEl.hidden = true;
-    errEl.textContent = "";
-  }
-
-  const q = current ? `?current=${encodeURIComponent(current)}` : "";
-  const data = await pbRequest(
-    `/api/syncms/instances/${encodeURIComponent(instanceId)}/browse${q}`
-  );
-
-  if (state.selectedInstanceId !== instanceId) return data;
-
-  if (!data.ok) {
-    if (listEl) listEl.innerHTML = "";
-    if (errEl) {
-      errEl.hidden = false;
-      errEl.textContent = data.error || "Browse mislukt";
-    }
-    return data;
-  }
-
-  const entries = data.entries || [];
-  const atRoot = isBrowseAtRoot(current);
-  if (listEl) {
-    if (!entries.length) {
-      listEl.innerHTML = `<li class="hint small">Geen submappen.</li>`;
-    } else {
-      listEl.innerHTML = entries
-        .map((entry) => {
-          const selected =
-            atRoot && bs.selected && pathsBrowseEqual(entry, bs.selected)
-              ? " browse-dir-selected"
-              : "";
-          return `<li><button type="button" class="browse-dir${selected}" data-path="${escapeAttr(entry)}">${escapeHtml(entry)}</button></li>`;
-        })
-        .join("");
-      listEl.querySelectorAll(".browse-dir").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const path = btn.getAttribute("data-path") || "";
-          if (isBrowseAtRoot(bs.current)) {
-            bs.selected = rememberedBrowsePath(path);
-            updateBrowseSelectedUi(instanceId);
-            applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
-            listEl.querySelectorAll(".browse-dir").forEach((b) => {
-              b.classList.toggle(
-                "browse-dir-selected",
-                pathsBrowseEqual(b.getAttribute("data-path") || "", path)
-              );
-            });
-            return;
-          }
-          bs.selected = rememberedBrowsePath(path);
-          updateBrowseSelectedUi(instanceId);
-          loadBrowseDirectory(instanceId, normalizeBrowseCurrent(path));
-        });
-      });
-    }
-  }
-
-  const dirPath = browseDirectoryAsFolderPath(current);
-  if (dirPath) {
-    bs.selected = rememberedBrowsePath(dirPath);
-    applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
-  }
-
-  updateBrowseSelectedUi(instanceId);
-
-  return data;
-}
-
-function drillIntoSelectedPath(instanceId) {
-  const bs = getBrowseState(instanceId);
-  if (!bs.selected) return;
-  loadBrowseDirectory(instanceId, normalizeBrowseCurrent(bs.selected));
-}
-
-function setupFolderBrowse(inst) {
-  const bs = getBrowseState(inst.id);
-  const selectedEl = document.getElementById("browse-selected-path");
-
-  document.getElementById("browse-btn-home")?.addEventListener("click", () => {
-    loadBrowseDirectory(inst.id, "~");
-  });
-  document.getElementById("browse-btn-up")?.addEventListener("click", () => {
-    loadBrowseDirectory(inst.id, "");
-  });
-  document.getElementById("browse-btn-reload")?.addEventListener("click", () => {
-    loadBrowseDirectory(inst.id, bs.current);
-  });
-  document.getElementById("detail-btn-refresh-folders")?.addEventListener("click", async () => {
-    const btn = document.getElementById("detail-btn-refresh-folders");
-    if (btn) btn.disabled = true;
-    try {
-      await refreshInstanceFolders(inst.id);
-    } catch (err) {
-      alert(`Mappenlijst: ${err.message}`);
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  });
-
-  selectedEl?.addEventListener("click", () => {
-    drillIntoSelectedPath(inst.id);
-  });
-
-  loadBrowseDirectory(inst.id, bs.current).catch((err) => {
-    const errEl = document.getElementById("browse-error");
-    if (errEl) {
-      errEl.hidden = false;
-      errEl.textContent = err.message;
-    }
-  });
-
-  if (!state.foldersByInstance[inst.id]?.length) {
-    refreshInstanceFolders(inst.id).catch(() => {});
-  }
-}
-
-function renderInstanceFoldersPanel(inst) {
-  const panel = document.getElementById("instance-folders");
-  if (!panel) return;
-
-  if (!inst) {
-    panel.innerHTML = `<p class="hint">Mapinfo verschijnt hier na selectie.</p>`;
-    return;
-  }
-
-  const folders = state.foldersByInstance[inst.id] || [];
-  const foldersHtml = buildFolderListHtml(folders);
-  const bs = getBrowseState(inst.id);
-  const suggestedId = lastPathSegmentName(bs.selected);
-
-  panel.innerHTML = `
-    <h3 class="folders-col-title">Mappen — ${escapeHtml(inst.name)}</h3>
-    <h4 class="detail-subhead">Geconfigureerd (Syncthing)</h4>
-    <div id="detail-folder-config">${foldersHtml}</div>
-    <button type="button" class="btn ghost btn-compact" id="detail-btn-refresh-folders">Vernieuw mappenlijst</button>
-
-    <h4 class="detail-subhead">Pad verkennen (fase A)</h4>
-    <p class="hint small">Blader op deze Syncthing-host. Alleen lezen.</p>
-    <div class="folder-browse">
-      <div class="browse-toolbar">
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-home" title="Home directory">~ Home</button>
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-up">Omhoog</button>
-        <button type="button" class="btn ghost btn-compact" id="browse-btn-reload">Herlaad</button>
-      </div>
-      <p class="browse-current mono wrap" id="browse-current-path">${escapeHtml(browsePathLabel(bs.current))}</p>
-      <ul class="browse-entries" id="browse-entries"><li class="hint small">Laden…</li></ul>
-      <p class="hint small browse-selected">
-        Geselecteerde map:
-        <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
-      </p>
-      <p class="hint small">Root: kies een map in de lijst. Dieper: blader; bronpad volgt de geselecteerde map. Omhoog = root.</p>
-      <p class="hint small browse-error" id="browse-error" hidden></p>
-    </div>
-
-    <h4 class="detail-subhead">Map toevoegen (Syncthing)</h4>
-    <p class="hint small">Voegt alleen een folder toe op <strong>${escapeHtml(inst.name)}</strong>. Koppel eerst devices (kolom instance) en deel daarna in Syncthing (folder → devices).</p>
-    <form class="share-form" id="share-form" onsubmit="return false">
-      <label class="share-field">Folder-ID (Syncthing)
-        <input id="share-folder-id" name="folder_id" required maxlength="64" autocomplete="off" value="${escapeAttr(suggestedId)}" />
-      </label>
-      <label class="share-field">Label
-        <input id="share-folder-label" name="label" maxlength="120" autocomplete="off" value="${escapeAttr(suggestedId)}" />
-      </label>
-      <label class="share-field">Pad op deze host (van browser)
-        <input id="share-source-path" class="mono" readonly value="${escapeAttr(bs.selected || "")}" />
-      </label>
-      <button type="button" class="btn primary btn-compact" id="btn-add-folder">Map toevoegen aan Syncthing</button>
-    </form>`;
-
-  setupFolderBrowse(inst);
-  setupAddFolderForm(inst);
-}
-
 function renderInstanceDetail() {
   const panel = document.getElementById("instance-detail");
   const inst = state.instances.find((i) => i.id === state.selectedInstanceId);
 
   if (!inst) {
     panel.innerHTML = `<p class="hint">Selecteer een instance in het diagram.</p>`;
-    renderInstanceFoldersPanel(null);
+    renderInstanceStatsPanel(null);
     return;
   }
 
@@ -1076,7 +792,7 @@ function renderInstanceDetail() {
       <button type="button" class="btn danger" id="detail-btn-delete">Verwijderen</button>
     </div>`;
 
-  renderInstanceFoldersPanel(inst);
+  renderInstanceStatsPanel(inst);
 
   document.getElementById("detail-btn-pair-devices")?.addEventListener("click", () => openPairDevicesDialog(inst));
   document.getElementById("detail-btn-edit")?.addEventListener("click", () => openDialog(inst));
@@ -1127,10 +843,8 @@ function renderOverview(topology) {
   state.topology = topology || { links: [] };
 
   state.topoErrors = {};
-  state.foldersByInstance = {};
   for (const ti of topology.instances || []) {
     if (ti.error) state.topoErrors[ti.instanceId] = ti.error;
-    state.foldersByInstance[ti.instanceId] = ti.folders || [];
   }
   if (topology.diagnostics?.hookError) {
     state.topoErrors.__hook = topology.diagnostics.hookError;
@@ -1523,6 +1237,7 @@ async function refresh() {
   setFooterStatus("Instances laden…");
   try {
     state.instances = await listAll("instances", { sort: "name" });
+    state.instanceTransferStats = {};
     syncInstanceSelect();
     renderOverview({
       links: [],

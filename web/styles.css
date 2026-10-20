@@ -187,7 +187,7 @@ code {
 }
 
 .instance-detail,
-.instance-folders {
+.instance-stats {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) - 4px);
@@ -199,15 +199,28 @@ code {
   min-width: 0;
 }
 
-.instance-folders {
+.instance-stats {
   max-height: min(560px, 70vh);
   overflow: auto;
 }
 
-.folders-col-title {
+.stats-col-title {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
+}
+
+.instance-period-block {
+  margin-top: 0.35rem;
+}
+
+.period-stats {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.period-stats dd {
+  font-variant-numeric: tabular-nums;
 }
 
 .detail-head {
@@ -428,10 +441,6 @@ code {
 .pair-dialog-error {
   color: var(--danger);
   margin: 0.5rem 0 0;
-}
-
-.detail-subhead {
-  margin-top: 1rem;
 }
 
 .share-partners-fieldset {
@@ -795,7 +804,7 @@ dialog label.checkbox {
   }
 
   .instance-detail,
-  .instance-folders {
+  .instance-stats {
     min-height: auto;
     max-height: none;
   }
