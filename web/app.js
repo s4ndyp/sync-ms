@@ -600,6 +600,134 @@ function updateBrowseSelectedUi(instanceId) {
     selectedBtn.textContent = bs.selected || "—";
     selectedBtn.disabled = !bs.selected;
   }
+  syncShareFormFromBrowse(instanceId);
+}
+
+function suggestFolderIdFromPath(path) {
+  if (!path) return "";
+  let p = String(path).replace(/\\/g, "/").replace(/\/+$/, "");
+  const seg = p.split("/").pop() || "";
+  return seg
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function syncShareFormFromBrowse(instanceId) {
+  const bs = getBrowseState(instanceId);
+  const pathInput = document.getElementById("share-source-path");
+  if (pathInput) pathInput.value = bs.selected || "";
+  const idInput = document.getElementById("share-folder-id");
+  if (idInput && idInput.dataset.userEdited !== "1" && bs.selected) {
+    idInput.value = suggestFolderIdFromPath(bs.selected);
+  }
+  const labelInput = document.getElementById("share-folder-label");
+  if (labelInput && labelInput.dataset.userEdited !== "1" && bs.selected) {
+    const seg = suggestFolderIdFromPath(bs.selected);
+    if (seg && !labelInput.value) labelInput.value = seg;
+  }
+}
+
+function buildPartnerCheckboxesHtml(sourceInstId) {
+  const others = state.instances.filter((i) => i.id !== sourceInstId);
+  if (!others.length) {
+    return `<p class="hint small">Geen andere instances — voeg eerst een tweede node toe.</p>`;
+  }
+  return `<ul class="share-partners-list">${others
+    .map((i) => {
+      const sid = i.syncthing_id ? "" : " (syncthing_id onbekend)";
+      return `<li><label class="share-partner"><input type="checkbox" name="share-partner" value="${escapeAttr(i.id)}" /> ${escapeHtml(i.name)}${escapeHtml(sid)}</label></li>`;
+    })
+    .join("")}</ul>`;
+}
+
+function setupFolderShareForm(inst) {
+  const idInput = document.getElementById("share-folder-id");
+  const labelInput = document.getElementById("share-folder-label");
+  idInput?.addEventListener("input", () => {
+    if (idInput) idInput.dataset.userEdited = "1";
+  });
+  labelInput?.addEventListener("input", () => {
+    if (labelInput) labelInput.dataset.userEdited = "1";
+  });
+
+  syncShareFormFromBrowse(inst.id);
+
+  document.getElementById("btn-share-apply")?.addEventListener("click", async () => {
+    const folderId = document.getElementById("share-folder-id")?.value.trim();
+    const label = document.getElementById("share-folder-label")?.value.trim();
+    const sourcePath = document.getElementById("share-source-path")?.value.trim();
+    const partnerPath = document.getElementById("share-partner-path")?.value.trim();
+    const partnerIds = [];
+    document.querySelectorAll('input[name="share-partner"]:checked').forEach((el) => {
+      partnerIds.push(el.value);
+    });
+
+    if (!sourcePath) {
+      alert("Kies eerst een map via de browser (Geselecteerde map).");
+      return;
+    }
+    if (!folderId) {
+      alert("Vul een folder-ID in (Syncthing map-id).");
+      return;
+    }
+    if (!partnerIds.length) {
+      alert("Vink minimaal één partner-instance aan.");
+      return;
+    }
+
+    const names = partnerIds
+      .map((id) => state.instances.find((x) => x.id === id)?.name || id)
+      .join(", ");
+
+    if (
+      !confirm(
+        `Syncthing-config schrijven?\n\nBron: ${inst.name}\nMap: ${folderId}\nPad: ${sourcePath}\nPartners: ${names}\n\nPartner-pad (default): ${partnerPath || "~/" + folderId}\n\nAPI-key moet config mogen wijzigen.`
+      )
+    ) {
+      return;
+    }
+
+    const btn = document.getElementById("btn-share-apply");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Toepassen…";
+    }
+    try {
+      const res = await pbRequest(
+        `/api/syncms/instances/${encodeURIComponent(inst.id)}/share-folder`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            folder_id: folderId,
+            label: label || folderId,
+            source_path: sourcePath,
+            partner_path: partnerPath,
+            partner_instance_ids: partnerIds,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const stepMsg = (res.steps || [])
+          .filter((s) => !s.ok)
+          .map((s) => `${s.instance}: ${s.error}`)
+          .join("\n");
+        alert((res.error || "Sync mislukt") + (stepMsg ? "\n\n" + stepMsg : ""));
+        return;
+      }
+      alert(`Sync-config toegepast voor map "${res.folderId}". Vernieuwen…`);
+      await refreshInstanceFolders(inst.id);
+      const topology = await loadTopology();
+      renderOverview(topology);
+    } catch (err) {
+      alert(`Sync mislukt: ${err.message}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Sync config toepassen";
+      }
+    }
+  });
 }
 
 async function refreshInstanceFolders(instanceId) {
@@ -756,6 +884,8 @@ function renderInstanceFoldersPanel(inst) {
   const folders = state.foldersByInstance[inst.id] || [];
   const foldersHtml = buildFolderListHtml(folders);
   const bs = getBrowseState(inst.id);
+  const suggestedId = suggestFolderIdFromPath(bs.selected);
+  const partnersHtml = buildPartnerCheckboxesHtml(inst.id);
 
   panel.innerHTML = `
     <h3 class="folders-col-title">Mappen — ${escapeHtml(inst.name)}</h3>
@@ -780,9 +910,32 @@ function renderInstanceFoldersPanel(inst) {
       <p class="hint small">Root: kies map → klik <em>Geselecteerde map</em>. Omhoog = root.</p>
       <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden</button>
       <p class="hint small browse-error" id="browse-error" hidden></p>
-    </div>`;
+    </div>
+
+    <h4 class="detail-subhead">Sync instellen (fase B)</h4>
+    <p class="hint small">Bron = geselecteerde instance. Partners krijgen dezelfde folder-ID; hub → alleen sync met bron.</p>
+    <form class="share-form" id="share-form" onsubmit="return false">
+      <label class="share-field">Folder-ID (Syncthing)
+        <input id="share-folder-id" name="folder_id" required maxlength="64" autocomplete="off" value="${escapeAttr(suggestedId)}" />
+      </label>
+      <label class="share-field">Label
+        <input id="share-folder-label" name="label" maxlength="120" autocomplete="off" value="${escapeAttr(suggestedId)}" />
+      </label>
+      <label class="share-field">Bronpad (van browser)
+        <input id="share-source-path" class="mono" readonly value="${escapeAttr(bs.selected || "")}" />
+      </label>
+      <label class="share-field">Partner-pad (op elke partner)
+        <input id="share-partner-path" class="mono" placeholder="~/{folder-id} indien leeg" autocomplete="off" />
+      </label>
+      <fieldset class="share-partners-fieldset">
+        <legend>Sync met instances</legend>
+        ${partnersHtml}
+      </fieldset>
+      <button type="button" class="btn primary btn-compact" id="btn-share-apply">Sync config toepassen</button>
+    </form>`;
 
   setupFolderBrowse(inst);
+  setupFolderShareForm(inst);
 }
 
 function renderInstanceDetail() {

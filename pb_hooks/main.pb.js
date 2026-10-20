@@ -32,3 +32,8 @@ routerAdd("GET", "/api/syncms/instances/{instanceId}/folders", (c) => {
   const api = require(`${__hooks}/syncms_api.js`);
   return api.instanceFolders(c);
 });
+
+routerAdd("POST", "/api/syncms/instances/{instanceId}/share-folder", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.applyFolderShare(c);
+});
