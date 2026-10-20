@@ -337,6 +337,36 @@ code {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.browse-dir-selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.browse-selected-path {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0.2rem 0.45rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  text-align: left;
+  word-break: break-all;
+  color: var(--accent);
+  background: var(--bg-elev);
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.browse-selected-path:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.browse-selected-path:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elev));
+}
+
 .browse-error {
   color: var(--danger);
   margin-top: 0.35rem;
