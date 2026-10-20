@@ -47,6 +47,8 @@ type Instance struct {
 	LastError       string `json:"last_error"`
 	InBytesTotal    int64  `json:"in_bytes_total"`
 	OutBytesTotal   int64  `json:"out_bytes_total"`
+	InBytesAlltime  int64  `json:"in_bytes_alltime"`
+	OutBytesAlltime int64  `json:"out_bytes_alltime"`
 	InSpeedBps      float64 `json:"in_speed_bps"`
 	OutSpeedBps     float64 `json:"out_speed_bps"`
 	Version         string `json:"version"`

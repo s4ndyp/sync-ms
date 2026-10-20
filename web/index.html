@@ -19,6 +19,13 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button type="button" id="btn-config-backup" class="btn ghost" title="Instances als JSON downloaden">
+          Backup config
+        </button>
+        <button type="button" id="btn-config-restore" class="btn ghost" title="Instances uit JSON importeren">
+          Restore config
+        </button>
+        <input type="file" id="config-restore-file" accept="application/json,.json" hidden />
         <button type="button" id="btn-refresh" class="btn ghost">Vernieuwen</button>
         <button type="button" id="btn-add-instance" class="btn primary">Instance toevoegen</button>
       </div>

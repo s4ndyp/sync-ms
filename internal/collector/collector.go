@@ -256,16 +256,20 @@ func (c *Collector) takeSample(ctx context.Context, inst pbstore.Instance, clien
 	}
 
 	sampleCount := inst.SampleCount + 1
+	inAlltime := inst.InBytesAlltime + inDelta
+	outAlltime := inst.OutBytesAlltime + outDelta
 	patch := map[string]any{
-		"online":          true,
-		"last_seen":       now.Format(time.RFC3339Nano),
-		"last_error":      "",
-		"in_bytes_total":  inTotal,
-		"out_bytes_total": outTotal,
-		"in_speed_bps":    inSpeed,
-		"out_speed_bps":   outSpeed,
-		"last_sample_at":  recorded,
-		"sample_count":    sampleCount,
+		"online":             true,
+		"last_seen":          now.Format(time.RFC3339Nano),
+		"last_error":         "",
+		"in_bytes_total":     inTotal,
+		"out_bytes_total":    outTotal,
+		"in_bytes_alltime":   inAlltime,
+		"out_bytes_alltime":  outAlltime,
+		"in_speed_bps":       inSpeed,
+		"out_speed_bps":      outSpeed,
+		"last_sample_at":     recorded,
+		"sample_count":       sampleCount,
 	}
 	if syncthingID != "" {
 		patch["syncthing_id"] = syncthingID
