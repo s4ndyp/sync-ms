@@ -10,6 +10,8 @@ const state = {
   editingId: null,
   transferChart: null,
   speedChart: null,
+  /** @type {Record<string, { current: string, selected: string }>} */
+  folderBrowseByInstance: {},
 };
 
 const TOPO_W = 1000;
@@ -535,6 +537,172 @@ function renderTopologyNodes(instances, layout) {
   });
 }
 
+function buildFolderListHtml(folders) {
+  if (!folders.length) {
+    return `<p class="hint small">Nog geen mappen geladen. Klik op <em>Vernieuw mappenlijst</em>.</p>`;
+  }
+  return `<div class="folder-list">${folders
+    .map((f) => {
+      const shared = (f.sharedWith || [])
+        .map((s) =>
+          s.instanceName
+            ? `<strong>${escapeHtml(s.instanceName)}</strong>`
+            : escapeHtml(s.deviceName || s.deviceId || "")
+        )
+        .join(", ");
+      return `<details class="folder-item"><summary><code>${escapeHtml(f.id)}</code> — ${escapeHtml(f.label || f.id)}</summary>
+        <dl class="stat-grid folder-meta">
+          <dt>Locatie</dt><dd class="mono wrap">${escapeHtml(f.path || "—")}</dd>
+          <dt>Soort</dt><dd>${escapeHtml(f.typeLabel || f.type || "—")}</dd>
+          <dt>Gedeeld met</dt><dd class="wrap">${shared || "—"}</dd>
+        </dl></details>`;
+    })
+    .join("")}</div>`;
+}
+
+function getBrowseState(instanceId) {
+  if (!state.folderBrowseByInstance[instanceId]) {
+    state.folderBrowseByInstance[instanceId] = { current: "", selected: "" };
+  }
+  return state.folderBrowseByInstance[instanceId];
+}
+
+function browsePathLabel(current) {
+  if (!current) return "(roots — kies een schijf of map)";
+  return current;
+}
+
+function browseParentPath(current) {
+  if (!current || current === "~") return "";
+  let p = String(current).replace(/\\/g, "/");
+  const hadTrailing = p.endsWith("/");
+  if (hadTrailing && p.length > 1) p = p.slice(0, -1);
+  const idx = p.lastIndexOf("/");
+  if (idx <= 0) {
+    if (p.startsWith("/") && p.length === 1) return "";
+    return "/";
+  }
+  const parent = p.slice(0, idx + 1);
+  return parent || "/";
+}
+
+async function refreshInstanceFolders(instanceId) {
+  const data = await pbRequest(`/api/syncms/instances/${encodeURIComponent(instanceId)}/folders`);
+  if (data.folders) state.foldersByInstance[instanceId] = data.folders;
+  const el = document.getElementById("detail-folder-config");
+  if (el && state.selectedInstanceId === instanceId) {
+    el.innerHTML = buildFolderListHtml(data.folders || []);
+  }
+  return data;
+}
+
+async function loadBrowseDirectory(instanceId, current) {
+  const bs = getBrowseState(instanceId);
+  bs.current = current;
+  const pathEl = document.getElementById("browse-current-path");
+  const listEl = document.getElementById("browse-entries");
+  const errEl = document.getElementById("browse-error");
+  const selectBtn = document.getElementById("browse-btn-select");
+
+  if (pathEl) pathEl.textContent = browsePathLabel(current);
+  if (listEl) listEl.innerHTML = `<li class="hint small">Laden…</li>`;
+  if (errEl) {
+    errEl.hidden = true;
+    errEl.textContent = "";
+  }
+
+  const q = current ? `?current=${encodeURIComponent(current)}` : "";
+  const data = await pbRequest(
+    `/api/syncms/instances/${encodeURIComponent(instanceId)}/browse${q}`
+  );
+
+  if (state.selectedInstanceId !== instanceId) return data;
+
+  if (!data.ok) {
+    if (listEl) listEl.innerHTML = "";
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = data.error || "Browse mislukt";
+    }
+    return data;
+  }
+
+  const entries = data.entries || [];
+  if (listEl) {
+    if (!entries.length) {
+      listEl.innerHTML = `<li class="hint small">Geen submappen.</li>`;
+    } else {
+      listEl.innerHTML = entries
+        .map(
+          (entry) =>
+            `<li><button type="button" class="browse-dir" data-path="${escapeAttr(entry)}">${escapeHtml(entry)}</button></li>`
+        )
+        .join("");
+      listEl.querySelectorAll(".browse-dir").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          loadBrowseDirectory(instanceId, btn.getAttribute("data-path") || "");
+        });
+      });
+    }
+  }
+
+  if (selectBtn) {
+    selectBtn.disabled = false;
+  }
+
+  const selectedEl = document.getElementById("browse-selected-path");
+  if (selectedEl) {
+    selectedEl.textContent = bs.selected || "—";
+  }
+
+  return data;
+}
+
+function setupFolderBrowse(inst) {
+  const bs = getBrowseState(inst.id);
+  const selectBtn = document.getElementById("browse-btn-select");
+  const selectedEl = document.getElementById("browse-selected-path");
+
+  document.getElementById("browse-btn-home")?.addEventListener("click", () => {
+    loadBrowseDirectory(inst.id, "~");
+  });
+  document.getElementById("browse-btn-up")?.addEventListener("click", () => {
+    loadBrowseDirectory(inst.id, browseParentPath(bs.current));
+  });
+  document.getElementById("browse-btn-reload")?.addEventListener("click", () => {
+    loadBrowseDirectory(inst.id, bs.current);
+  });
+  document.getElementById("detail-btn-refresh-folders")?.addEventListener("click", async () => {
+    const btn = document.getElementById("detail-btn-refresh-folders");
+    if (btn) btn.disabled = true;
+    try {
+      await refreshInstanceFolders(inst.id);
+    } catch (err) {
+      alert(`Mappenlijst: ${err.message}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  selectBtn?.addEventListener("click", () => {
+    const path = bs.current || "";
+    bs.selected = path;
+    if (selectedEl) selectedEl.textContent = path || "(root)";
+  });
+
+  loadBrowseDirectory(inst.id, bs.current).catch((err) => {
+    const errEl = document.getElementById("browse-error");
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = err.message;
+    }
+  });
+
+  if (!state.foldersByInstance[inst.id]?.length) {
+    refreshInstanceFolders(inst.id).catch(() => {});
+  }
+}
+
 function renderInstanceDetail() {
   const panel = document.getElementById("instance-detail");
   const inst = state.instances.find((i) => i.id === state.selectedInstanceId);
@@ -548,26 +716,8 @@ function renderInstanceDetail() {
   const guiUrl = (inst.base_url || "").trim();
   const online = inst.online;
   const folders = state.foldersByInstance[inst.id] || [];
-  const foldersHtml =
-    folders.length === 0
-      ? `<p class="hint small">Geen map-config (topology API).</p>`
-      : `<div class="folder-list">${folders
-          .map((f) => {
-            const shared = (f.sharedWith || [])
-              .map((s) =>
-                s.inSyncMs && s.instanceName
-                  ? `<strong>${escapeHtml(s.instanceName)}</strong>`
-                  : escapeHtml(s.deviceName || "")
-              )
-              .join(", ");
-            return `<details class="folder-item"><summary><code>${escapeHtml(f.id)}</code> — ${escapeHtml(f.label || f.id)}</summary>
-              <dl class="stat-grid folder-meta">
-                <dt>Locatie</dt><dd class="mono wrap">${escapeHtml(f.path || "—")}</dd>
-                <dt>Soort</dt><dd>${escapeHtml(f.typeLabel || f.type || "—")}</dd>
-                <dt>Gedeeld met</dt><dd class="wrap">${shared || "—"}</dd>
-              </dl></details>`;
-          })
-          .join("")}</div>`;
+  const foldersHtml = buildFolderListHtml(folders);
+  const bs = getBrowseState(inst.id);
 
   panel.innerHTML = `
     <div class="detail-head">
@@ -590,6 +740,25 @@ function renderInstanceDetail() {
         ? `<p class="hint small detail-error">${escapeHtml(inst.last_error || topoErr)}</p>`
         : ""
     }
+    <h4 class="detail-subhead">Geconfigureerde mappen (Syncthing)</h4>
+    <div id="detail-folder-config">${foldersHtml}</div>
+    <button type="button" class="btn ghost btn-compact" id="detail-btn-refresh-folders">Vernieuw mappenlijst</button>
+
+    <h4 class="detail-subhead">Pad verkennen (fase A)</h4>
+    <p class="hint small">Blader op <strong>deze</strong> Syncthing-host (remote API). Alleen lezen — sync naar partners volgt later.</p>
+    <div class="folder-browse">
+      <div class="browse-toolbar">
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-home" title="Home directory">~ Home</button>
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-up">Omhoog</button>
+        <button type="button" class="btn ghost btn-compact" id="browse-btn-reload">Herlaad</button>
+      </div>
+      <p class="browse-current mono wrap" id="browse-current-path">${escapeHtml(browsePathLabel(bs.current))}</p>
+      <ul class="browse-entries" id="browse-entries"><li class="hint small">Laden…</li></ul>
+      <p class="hint small browse-selected">Gekozen pad (voor later): <code id="browse-selected-path">${escapeHtml(bs.selected || "—")}</code></p>
+      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Dit pad onthouden</button>
+      <p class="hint small browse-error" id="browse-error" hidden></p>
+    </div>
+
     <div class="detail-actions">
       ${
         guiUrl
@@ -599,6 +768,8 @@ function renderInstanceDetail() {
       <button type="button" class="btn ghost" id="detail-btn-edit">Bewerken</button>
       <button type="button" class="btn danger" id="detail-btn-delete">Verwijderen</button>
     </div>`;
+
+  setupFolderBrowse(inst);
 
   document.getElementById("detail-btn-edit")?.addEventListener("click", () => openDialog(inst));
   document.getElementById("detail-btn-delete")?.addEventListener("click", async () => {
@@ -685,6 +856,10 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(String(s));
 }
 
 function formatWhen(s) {

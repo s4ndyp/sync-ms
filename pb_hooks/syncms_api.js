@@ -32,6 +32,79 @@ function stRequest(baseUrl, apiKey, path) {
   });
 }
 
+function stBrowse(baseUrl, apiKey, current) {
+  let path = "/rest/system/browse";
+  if (current !== undefined && current !== null && String(current).length > 0) {
+    path += "?current=" + encodeURIComponent(String(current));
+  }
+  return stRequest(baseUrl, apiKey, path);
+}
+
+function loadInstanceCredentials(instanceId) {
+  if (!instanceId) return { error: "instanceId ontbreekt" };
+  let rec;
+  try {
+    rec = $app.findRecordById("instances", instanceId);
+  } catch (_) {
+    return { error: "Instance niet gevonden" };
+  }
+  const baseUrl = normalizeBaseUrl(rec.get("base_url"));
+  const apiKey = String(rec.get("api_key") || "").trim();
+  if (!baseUrl || !apiKey) {
+    return { error: "base_url of api_key ontbreekt op instance" };
+  }
+  return {
+    rec: rec,
+    instanceId: instanceId,
+    name: rec.get("name") || instanceId,
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  };
+}
+
+function mapConfigFolders(baseUrl, apiKey) {
+  const devRes = stRequest(baseUrl, apiKey, "/rest/config/devices");
+  let deviceNames = {};
+  if (devRes.statusCode === 200) {
+    deviceNames = parseDeviceNames(devRes.raw);
+  }
+
+  const folderRes = stRequest(baseUrl, apiKey, "/rest/config/folders");
+  if (folderRes.statusCode !== 200) {
+    return {
+      ok: false,
+      error: `folders: HTTP ${folderRes.statusCode}`,
+      folders: [],
+    };
+  }
+
+  const folders = parseFolders(folderRes.raw);
+  const mapped = [];
+  for (let i = 0; i < folders.length; i++) {
+    const folder = folders[i];
+    const deviceIds = folderDeviceIds(folder);
+    const sharedWith = [];
+    for (let d = 0; d < deviceIds.length; d++) {
+      const devNorm = deviceIds[d];
+      sharedWith.push({
+        deviceId: devNorm,
+        deviceName: deviceNames[devNorm] || devNorm.slice(0, 11) + "…",
+      });
+    }
+    mapped.push({
+      id: folder.id || "",
+      label: folder.label || folder.id || "map",
+      path: folder.path || "",
+      type: folder.type || "sendreceive",
+      typeLabel: folderTypeLabel(folder.type || "sendreceive"),
+      rescanIntervalS: folder.rescanIntervalS || 0,
+      sharedWith: sharedWith,
+    });
+  }
+
+  return { ok: true, error: "", folders: mapped };
+}
+
 function canSendFolder(type) {
   return type === "sendreceive" || type === "sendonly";
 }
@@ -581,6 +654,89 @@ function restoreConfig(c) {
   });
 }
 
+function instanceBrowse(c) {
+  const instanceId = c.request.pathValue("instanceId");
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error, entries: [] });
+  }
+
+  const current = c.request.url.query().get("current") || "";
+
+  try {
+    const res = stBrowse(cred.baseUrl, cred.apiKey, current);
+    if (res.statusCode !== 200) {
+      const snippet = (res.raw || "").slice(0, 200);
+      return c.json(200, {
+        ok: false,
+        error: `browse: HTTP ${res.statusCode}${snippet ? " — " + snippet : ""}`,
+        instanceId: cred.instanceId,
+        instanceName: cred.name,
+        current: current,
+        entries: [],
+        readOnly: true,
+      });
+    }
+
+    let entries = [];
+    try {
+      entries = JSON.parse(res.raw || "[]");
+      if (!Array.isArray(entries)) entries = [];
+    } catch (_) {
+      entries = [];
+    }
+
+    return c.json(200, {
+      ok: true,
+      instanceId: cred.instanceId,
+      instanceName: cred.name,
+      current: current,
+      entries: entries,
+      readOnly: true,
+      hint: "Fase A: alleen lezen. Sync naar partners komt in een latere fase.",
+    });
+  } catch (err) {
+    return c.json(200, {
+      ok: false,
+      error: String(err),
+      instanceId: cred.instanceId,
+      instanceName: cred.name,
+      current: current,
+      entries: [],
+      readOnly: true,
+    });
+  }
+}
+
+function instanceFolders(c) {
+  const instanceId = c.request.pathValue("instanceId");
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error, folders: [] });
+  }
+
+  try {
+    const result = mapConfigFolders(cred.baseUrl, cred.apiKey);
+    return c.json(200, {
+      ok: result.ok,
+      error: result.error,
+      instanceId: cred.instanceId,
+      instanceName: cred.name,
+      folders: result.folders,
+      readOnly: true,
+    });
+  } catch (err) {
+    return c.json(200, {
+      ok: false,
+      error: String(err),
+      instanceId: cred.instanceId,
+      instanceName: cred.name,
+      folders: [],
+      readOnly: true,
+    });
+  }
+}
+
 function topology(c) {
   try {
     return buildTopologyResponse(c);
@@ -606,4 +762,6 @@ module.exports = {
   topology,
   backupConfig,
   restoreConfig,
+  instanceBrowse,
+  instanceFolders,
 };
