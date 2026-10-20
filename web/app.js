@@ -638,10 +638,10 @@ function applyShareFieldsFromRememberedPath(instanceId, fullPath, force) {
 
   const bs = getBrowseState(instanceId);
   bs.selected = path;
-  updateBrowseSelectedUi(instanceId);
-  if (force) {
-    const selectedBtn = document.getElementById("browse-selected-path");
-    if (selectedBtn) selectedBtn.textContent = path;
+  const selectedBtn = document.getElementById("browse-selected-path");
+  if (selectedBtn) {
+    selectedBtn.textContent = path;
+    selectedBtn.disabled = false;
   }
 }
 
@@ -651,20 +651,7 @@ function syncShareFormFromBrowse(instanceId) {
   applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
 }
 
-function buildPartnerCheckboxesHtml(sourceInstId) {
-  const others = state.instances.filter((i) => i.id !== sourceInstId);
-  if (!others.length) {
-    return `<p class="hint small">Geen andere instances — voeg eerst een tweede node toe.</p>`;
-  }
-  return `<ul class="share-partners-list">${others
-    .map((i) => {
-      const sid = i.syncthing_id ? "" : " (syncthing_id onbekend)";
-      return `<li><label class="share-partner"><input type="checkbox" name="share-partner" value="${escapeAttr(i.id)}" /> ${escapeHtml(i.name)}${escapeHtml(sid)}</label></li>`;
-    })
-    .join("")}</ul>`;
-}
-
-function setupFolderShareForm(inst) {
+function setupAddFolderForm(inst) {
   const idInput = document.getElementById("share-folder-id");
   const labelInput = document.getElementById("share-folder-label");
   idInput?.addEventListener("input", () => {
@@ -676,15 +663,10 @@ function setupFolderShareForm(inst) {
 
   syncShareFormFromBrowse(inst.id);
 
-  document.getElementById("btn-share-apply")?.addEventListener("click", async () => {
+  document.getElementById("btn-add-folder")?.addEventListener("click", async () => {
     const folderId = document.getElementById("share-folder-id")?.value.trim();
     const label = document.getElementById("share-folder-label")?.value.trim();
     const sourcePath = document.getElementById("share-source-path")?.value.trim();
-    const partnerPath = document.getElementById("share-partner-path")?.value.trim();
-    const partnerIds = [];
-    document.querySelectorAll('input[name="share-partner"]:checked').forEach((el) => {
-      partnerIds.push(el.value);
-    });
 
     if (!sourcePath) {
       alert('Kies een map en klik "Huidige map onthouden" (of selecteer in root + Geselecteerde map).');
@@ -694,63 +676,95 @@ function setupFolderShareForm(inst) {
       alert("Vul een folder-ID in (Syncthing map-id).");
       return;
     }
-    if (!partnerIds.length) {
-      alert("Vink minimaal één partner-instance aan.");
-      return;
-    }
-
-    const names = partnerIds
-      .map((id) => state.instances.find((x) => x.id === id)?.name || id)
-      .join(", ");
 
     if (
       !confirm(
-        `Syncthing-config schrijven?\n\nBron: ${inst.name}\nMap: ${folderId}\nPad: ${sourcePath}\nPartners: ${names}\n\nPartner-pad (default): ${partnerPath || "~/" + folderId}\n\nAPI-key moet config mogen wijzigen.`
+        `Map toevoegen aan Syncthing?\n\nInstance: ${inst.name}\nFolder-ID: ${folderId}\nPad: ${sourcePath}\n\nDe map wordt niet automatisch gedeeld met andere devices — koppel devices eerst of deel in de Syncthing GUI.\n\nAPI-key moet config mogen wijzigen.`
       )
     ) {
       return;
     }
 
-    const btn = document.getElementById("btn-share-apply");
+    const btn = document.getElementById("btn-add-folder");
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Toepassen…";
+      btn.textContent = "Toevoegen…";
     }
     try {
       const res = await pbRequest(
-        `/api/syncms/instances/${encodeURIComponent(inst.id)}/share-folder`,
+        `/api/syncms/instances/${encodeURIComponent(inst.id)}/add-folder`,
         {
           method: "POST",
           body: JSON.stringify({
             folder_id: folderId,
             label: label || folderId,
             source_path: sourcePath,
-            partner_path: partnerPath,
-            partner_instance_ids: partnerIds,
           }),
         }
       );
       if (!res.ok) {
-        const stepMsg = (res.steps || [])
-          .filter((s) => !s.ok)
-          .map((s) => `${s.instance}: ${s.error}`)
-          .join("\n");
-        alert((res.error || "Sync mislukt") + (stepMsg ? "\n\n" + stepMsg : ""));
+        alert(res.error || "Map toevoegen mislukt");
         return;
       }
-      alert(`Sync-config toegepast voor map "${res.folderId}". Vernieuwen…`);
+      alert(
+        res.existed
+          ? `Map "${res.folderId}" bijgewerkt op ${res.instance}.`
+          : `Map "${res.folderId}" toegevoegd op ${res.instance}.`
+      );
       await refreshInstanceFolders(inst.id);
       const topology = await loadTopology();
       renderOverview(topology);
     } catch (err) {
-      alert(`Sync mislukt: ${err.message}`);
+      alert(`Map toevoegen mislukt: ${err.message}`);
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = "Sync config toepassen";
+        btn.textContent = "Map toevoegen aan Syncthing";
       }
     }
   });
+}
+
+async function runAutoPairDevices() {
+  const enabled = state.instances.filter((i) => i.enabled !== false);
+  if (enabled.length < 2) {
+    alert("Minimaal twee enabled instances nodig om devices te koppelen.");
+    return;
+  }
+
+  if (
+    !confirm(
+      `Remote devices automatisch koppelen?\n\nVoor elke paar enabled instances zonder onderlinge device-entry voegt Sync-MS het remote device toe (beide kanten waar nodig).\n\nInstances: ${enabled.map((i) => i.name).join(", ")}\n\nAPI-keys moeten config mogen wijzigen.`
+    )
+  ) {
+    return;
+  }
+
+  const btn = document.getElementById("btn-auto-pair-devices");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Koppelen…";
+  }
+  try {
+    const res = await pbRequest("/api/syncms/auto-pair-devices", { method: "POST", body: "{}" });
+    if (!res.ok) {
+      const fail = (res.steps || []).filter((s) => s.ok === false);
+      const extra = fail.map((s) => `${s.instance || s.from}: ${s.error || ""}`).join("\n");
+      alert((res.error || "Koppelen mislukt") + (extra ? "\n\n" + extra : ""));
+      return;
+    }
+    alert(
+      `Klaar. ${res.pairsLinked} paar(en) gekoppeld, ${res.pairsAlreadyLinked} al gekoppeld (${res.instanceCount} instances).`
+    );
+    await refresh();
+  } catch (err) {
+    alert(`Koppelen mislukt: ${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Devices automatisch koppelen";
+    }
+  }
 }
 
 async function refreshInstanceFolders(instanceId) {
@@ -912,7 +926,6 @@ function renderInstanceFoldersPanel(inst) {
   const foldersHtml = buildFolderListHtml(folders);
   const bs = getBrowseState(inst.id);
   const suggestedId = lastPathSegmentName(bs.selected);
-  const partnersHtml = buildPartnerCheckboxesHtml(inst.id);
 
   panel.innerHTML = `
     <h3 class="folders-col-title">Mappen — ${escapeHtml(inst.name)}</h3>
@@ -939,8 +952,8 @@ function renderInstanceFoldersPanel(inst) {
       <p class="hint small browse-error" id="browse-error" hidden></p>
     </div>
 
-    <h4 class="detail-subhead">Sync instellen (fase B)</h4>
-    <p class="hint small">Bron = geselecteerde instance. Partners krijgen dezelfde folder-ID; hub → alleen sync met bron.</p>
+    <h4 class="detail-subhead">Map toevoegen (Syncthing)</h4>
+    <p class="hint small">Voegt alleen een folder toe op <strong>${escapeHtml(inst.name)}</strong>. Delen met andere nodes doe je via <em>Devices automatisch koppelen</em> en daarna Syncthing (folder → devices).</p>
     <form class="share-form" id="share-form" onsubmit="return false">
       <label class="share-field">Folder-ID (Syncthing)
         <input id="share-folder-id" name="folder_id" required maxlength="64" autocomplete="off" value="${escapeAttr(suggestedId)}" />
@@ -948,21 +961,14 @@ function renderInstanceFoldersPanel(inst) {
       <label class="share-field">Label
         <input id="share-folder-label" name="label" maxlength="120" autocomplete="off" value="${escapeAttr(suggestedId)}" />
       </label>
-      <label class="share-field">Bronpad (van browser)
+      <label class="share-field">Pad op deze host (van browser)
         <input id="share-source-path" class="mono" readonly value="${escapeAttr(bs.selected || "")}" />
       </label>
-      <label class="share-field">Partner-pad (op elke partner)
-        <input id="share-partner-path" class="mono" placeholder="~/{folder-id} indien leeg" autocomplete="off" />
-      </label>
-      <fieldset class="share-partners-fieldset">
-        <legend>Sync met instances</legend>
-        ${partnersHtml}
-      </fieldset>
-      <button type="button" class="btn primary btn-compact" id="btn-share-apply">Sync config toepassen</button>
+      <button type="button" class="btn primary btn-compact" id="btn-add-folder">Map toevoegen aan Syncthing</button>
     </form>`;
 
   setupFolderBrowse(inst);
-  setupFolderShareForm(inst);
+  setupAddFolderForm(inst);
 }
 
 function renderInstanceDetail() {
@@ -1291,6 +1297,7 @@ form.addEventListener("submit", async (e) => {
 document.getElementById("btn-cancel").addEventListener("click", () => dialog.close());
 document.getElementById("btn-add-instance").addEventListener("click", () => openDialog(null));
 document.getElementById("btn-refresh").addEventListener("click", () => refresh());
+document.getElementById("btn-auto-pair-devices")?.addEventListener("click", () => runAutoPairDevices());
 
 const restoreInput = document.getElementById("config-restore-file");
 

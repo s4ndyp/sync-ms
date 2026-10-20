@@ -34,7 +34,17 @@
     <main class="layout">
       <section class="panel" id="overview-panel">
         <div class="panel-head overview-head">
-          <h2>Overzicht</h2>
+          <div class="overview-head-row">
+            <h2>Overzicht</h2>
+            <button
+              type="button"
+              id="btn-auto-pair-devices"
+              class="btn ghost btn-compact"
+              title="Voeg ontbrekende remote devices toe tussen alle enabled instances"
+            >
+              Devices automatisch koppelen
+            </button>
+          </div>
           <p class="hint small topology-legend">
             Pijlen = map gedeeld volgens Syncthing-config (folder → devices). <strong>Twee punten</strong> = bidirectioneel,
             <strong>één punt</strong> = enkelzijdig. Gestippeld = alleen live TCP-verbinding (geen map-match).
