@@ -603,29 +603,52 @@ function updateBrowseSelectedUi(instanceId) {
   syncShareFormFromBrowse(instanceId);
 }
 
-function suggestFolderIdFromPath(path) {
-  if (!path) return "";
-  let p = String(path).replace(/\\/g, "/").replace(/\/+$/, "");
-  const seg = p.split("/").pop() || "";
-  return seg
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+/** Last path segment (selected folder name), e.g. /srv/sync/xdio → xdio */
+function lastPathSegmentName(path) {
+  if (!path || path === "~") return "";
+  const p = String(path).trim().replace(/[/\\]+$/, "");
+  const parts = p.split(/[/\\]/).filter(Boolean);
+  if (!parts.length) return "";
+  return parts[parts.length - 1];
+}
+
+function rememberedBrowsePath(path) {
+  return String(path || "").trim();
+}
+
+/** Fill fase B fields from a saved browse path (full path + folder id = last segment). */
+function applyShareFieldsFromRememberedPath(instanceId, fullPath, force) {
+  const path = rememberedBrowsePath(fullPath);
+  if (!path) return;
+  const seg = lastPathSegmentName(path);
+  const pathInput = document.getElementById("share-source-path");
+  const idInput = document.getElementById("share-folder-id");
+  const labelInput = document.getElementById("share-folder-label");
+
+  if (pathInput) pathInput.value = path;
+
+  if (idInput && (force || idInput.dataset.userEdited !== "1")) {
+    idInput.value = seg.slice(0, 64);
+    if (force) idInput.dataset.userEdited = "0";
+  }
+  if (labelInput && (force || labelInput.dataset.userEdited !== "1")) {
+    labelInput.value = seg.slice(0, 120);
+    if (force) labelInput.dataset.userEdited = "0";
+  }
+
+  const bs = getBrowseState(instanceId);
+  bs.selected = path;
+  updateBrowseSelectedUi(instanceId);
+  if (force) {
+    const selectedBtn = document.getElementById("browse-selected-path");
+    if (selectedBtn) selectedBtn.textContent = path;
+  }
 }
 
 function syncShareFormFromBrowse(instanceId) {
   const bs = getBrowseState(instanceId);
-  const pathInput = document.getElementById("share-source-path");
-  if (pathInput) pathInput.value = bs.selected || "";
-  const idInput = document.getElementById("share-folder-id");
-  if (idInput && idInput.dataset.userEdited !== "1" && bs.selected) {
-    idInput.value = suggestFolderIdFromPath(bs.selected);
-  }
-  const labelInput = document.getElementById("share-folder-label");
-  if (labelInput && labelInput.dataset.userEdited !== "1" && bs.selected) {
-    const seg = suggestFolderIdFromPath(bs.selected);
-    if (seg && !labelInput.value) labelInput.value = seg;
-  }
+  if (!bs.selected) return;
+  applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
 }
 
 function buildPartnerCheckboxesHtml(sourceInstId) {
@@ -664,7 +687,7 @@ function setupFolderShareForm(inst) {
     });
 
     if (!sourcePath) {
-      alert("Kies eerst een map via de browser (Geselecteerde map).");
+      alert('Kies een map en klik "Huidige map onthouden" (of selecteer in root + Geselecteerde map).');
       return;
     }
     if (!folderId) {
@@ -790,8 +813,9 @@ async function loadBrowseDirectory(instanceId, current) {
         btn.addEventListener("click", () => {
           const path = btn.getAttribute("data-path") || "";
           if (isBrowseAtRoot(bs.current)) {
-            bs.selected = path;
+            bs.selected = rememberedBrowsePath(path);
             updateBrowseSelectedUi(instanceId);
+            applyShareFieldsFromRememberedPath(instanceId, bs.selected, false);
             listEl.querySelectorAll(".browse-dir").forEach((b) => {
               b.classList.toggle(
                 "browse-dir-selected",
@@ -800,7 +824,7 @@ async function loadBrowseDirectory(instanceId, current) {
             });
             return;
           }
-          bs.selected = path;
+          bs.selected = rememberedBrowsePath(path);
           updateBrowseSelectedUi(instanceId);
           loadBrowseDirectory(instanceId, normalizeBrowseCurrent(path));
         });
@@ -850,9 +874,12 @@ function setupFolderBrowse(inst) {
   });
 
   selectBtn?.addEventListener("click", () => {
-    if (isBrowseAtRoot(bs.current)) return;
-    bs.selected = bs.current;
-    updateBrowseSelectedUi(inst.id);
+    if (isBrowseAtRoot(bs.current)) {
+      alert("Open eerst een map (niet root). Gebruik de lijst of Geselecteerde map om dieper te gaan.");
+      return;
+    }
+    const fullPath = rememberedBrowsePath(bs.current);
+    applyShareFieldsFromRememberedPath(inst.id, fullPath, true);
   });
 
   selectedEl?.addEventListener("click", () => {
@@ -884,7 +911,7 @@ function renderInstanceFoldersPanel(inst) {
   const folders = state.foldersByInstance[inst.id] || [];
   const foldersHtml = buildFolderListHtml(folders);
   const bs = getBrowseState(inst.id);
-  const suggestedId = suggestFolderIdFromPath(bs.selected);
+  const suggestedId = lastPathSegmentName(bs.selected);
   const partnersHtml = buildPartnerCheckboxesHtml(inst.id);
 
   panel.innerHTML = `
@@ -908,7 +935,7 @@ function renderInstanceFoldersPanel(inst) {
         <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
       </p>
       <p class="hint small">Root: kies map → klik <em>Geselecteerde map</em>. Omhoog = root.</p>
-      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden</button>
+      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden (vult bronpad + folder-ID)</button>
       <p class="hint small browse-error" id="browse-error" hidden></p>
     </div>
 
