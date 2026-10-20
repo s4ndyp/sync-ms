@@ -714,8 +714,105 @@ function downloadJson(filename, data) {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 1000);
+}
+
+function bindClick(id, handler) {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn(`Sync-MS: element #${id} ontbreekt`);
+    return;
+  }
+  el.addEventListener("click", handler);
+}
+
+async function buildConfigBackup() {
+  try {
+    return await pbRequest("/api/syncms/config/backup");
+  } catch (err) {
+    console.warn("backup API unavailable, using PocketBase records", err);
+    const rows = await listAll("instances", { sort: "name" });
+    return {
+      syncms_backup_version: 1,
+      exported_at: new Date().toISOString(),
+      instances: rows.map((r) => ({
+        name: String(r.name || "").trim(),
+        base_url: String(r.base_url || "").trim(),
+        api_key: String(r.api_key || "").trim(),
+        enabled: r.enabled !== false,
+      })),
+    };
+  }
+}
+
+async function restoreConfigPayload(parsed) {
+  try {
+    return await pbRequest("/api/syncms/config/restore", {
+      method: "POST",
+      body: JSON.stringify(parsed),
+    });
+  } catch (err) {
+    console.warn("restore API unavailable, using PocketBase records", err);
+    if (parsed.syncms_backup_version !== 1 || !Array.isArray(parsed.instances)) {
+      throw new Error("Ongeldig backup-bestand (syncms_backup_version: 1 vereist).");
+    }
+    const existing = await listAll("instances", { sort: "name" });
+    const byName = {};
+    for (const r of existing) {
+      const key = String(r.name || "")
+        .trim()
+        .toLowerCase();
+      if (key) byName[key] = r;
+    }
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const item of parsed.instances) {
+      const name = String(item.name || "").trim();
+      const base_url = String(item.base_url || "").trim();
+      const api_key = String(item.api_key || "").trim();
+      const enabled = item.enabled !== false;
+      if (!name || !base_url || !api_key) {
+        skipped++;
+        continue;
+      }
+      const key = name.toLowerCase();
+      const prev = byName[key];
+      if (prev) {
+        await pbRequest(`/api/collections/instances/records/${prev.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name, base_url, api_key, enabled }),
+        });
+        updated++;
+      } else {
+        await pbRequest("/api/collections/instances/records", {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            base_url,
+            api_key,
+            enabled,
+            last_event_id: 0,
+            online: false,
+            sample_count: 0,
+          }),
+        });
+        created++;
+      }
+    }
+    return { ok: true, created, updated, skipped };
+  }
+}
+
+function setFooterStatus(text) {
+  const footer = document.getElementById("footer-status");
+  if (footer) footer.textContent = text;
 }
 
 const dialog = document.getElementById("instance-dialog");
@@ -779,55 +876,74 @@ document.getElementById("btn-cancel").addEventListener("click", () => dialog.clo
 document.getElementById("btn-add-instance").addEventListener("click", () => openDialog(null));
 document.getElementById("btn-refresh").addEventListener("click", () => refresh());
 
-document.getElementById("btn-config-backup").addEventListener("click", async () => {
+const restoreInput = document.getElementById("config-restore-file");
+
+bindClick("btn-config-backup", async (ev) => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = "Backup…";
+  setFooterStatus("Config backup voorbereiden…");
   try {
-    const data = await pbRequest("/api/syncms/config/backup");
+    const data = await buildConfigBackup();
     const stamp = new Date().toISOString().slice(0, 10);
     downloadJson(`sync-ms-config-${stamp}.json`, data);
+    setFooterStatus(`Backup gedownload (${data.instances?.length ?? 0} instance(s)).`);
   } catch (err) {
+    setFooterStatus(`Backup mislukt: ${err.message}`);
     alert(`Backup mislukt: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
   }
 });
 
-const restoreInput = document.getElementById("config-restore-file");
-document.getElementById("btn-config-restore").addEventListener("click", () => {
+bindClick("btn-config-restore", () => {
+  if (!restoreInput) {
+    alert("Restore niet beschikbaar (bestandskiezer ontbreekt).");
+    return;
+  }
   restoreInput.value = "";
   restoreInput.click();
 });
 
-restoreInput.addEventListener("change", async () => {
-  const file = restoreInput.files?.[0];
-  if (!file) return;
-  let parsed;
-  try {
-    parsed = JSON.parse(await file.text());
-  } catch (_) {
-    alert("Geen geldig JSON-bestand.");
-    return;
-  }
-  const n = Array.isArray(parsed.instances) ? parsed.instances.length : 0;
-  if (
-    !confirm(
-      `Restore uit "${file.name}"?\n\n${n} instance(s). Bestaande namen worden overschreven (URL + API key). Statistieken blijven behouden.`
-    )
-  ) {
-    return;
-  }
-  try {
-    const res = await pbRequest("/api/syncms/config/restore", {
-      method: "POST",
-      body: JSON.stringify(parsed),
-    });
-    if (!res.ok) {
-      alert(res.error || "Restore mislukt");
+if (restoreInput) {
+  restoreInput.addEventListener("change", async () => {
+    const file = restoreInput.files?.[0];
+    if (!file) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch (_) {
+      alert("Geen geldig JSON-bestand.");
       return;
     }
-    alert(`Restore OK — ${res.created} nieuw, ${res.updated} bijgewerkt${res.skipped ? `, ${res.skipped} overgeslagen` : ""}.`);
-    await refresh();
-  } catch (err) {
-    alert(`Restore mislukt: ${err.message}`);
-  }
-});
+    const n = Array.isArray(parsed.instances) ? parsed.instances.length : 0;
+    if (
+      !confirm(
+        `Restore uit "${file.name}"?\n\n${n} instance(s). Bestaande namen worden overschreven (URL + API key). Statistieken blijven behouden.`
+      )
+    ) {
+      return;
+    }
+    setFooterStatus("Config restore…");
+    try {
+      const res = await restoreConfigPayload(parsed);
+      if (res.ok === false) {
+        alert(res.error || "Restore mislukt");
+        setFooterStatus("Restore mislukt.");
+        return;
+      }
+      const msg = `Restore OK — ${res.created} nieuw, ${res.updated} bijgewerkt${res.skipped ? `, ${res.skipped} overgeslagen` : ""}.`;
+      setFooterStatus(msg);
+      alert(msg);
+      await refresh();
+    } catch (err) {
+      setFooterStatus(`Restore mislukt: ${err.message}`);
+      alert(`Restore mislukt: ${err.message}`);
+    }
+  });
+}
 
 document.getElementById("btn-test-connection").addEventListener("click", async () => {
   const baseUrl = form.base_url.value.trim();
@@ -878,43 +994,70 @@ function syncInstanceSelect() {
   sel.value = cur;
 }
 
-async function loadTransferChart() {
-  const { rows, useHourly } = await loadSamplesForRange(state.range);
-  let filtered = rows;
-  if (state.chartInstance) {
-    filtered = rows.filter((r) => r.instance === state.chartInstance);
-  }
-  const data = aggregateChartData(filtered, useHourly, state.range);
+function filterSamplesByInstance(rows) {
+  if (!state.chartInstance) return rows;
+  return rows.filter((r) => r.instance === state.chartInstance);
+}
+
+async function loadTransferChartFromRows(rows, useHourly) {
+  const data = aggregateChartData(filterSamplesByInstance(rows), useHourly, state.range);
   renderTransferChart(data);
 }
 
-async function loadSpeedChart8h() {
-  const from = rangeStart("8h");
-  const filter = `recorded_at >= "${toPbFilterDate(from)}"`;
-  const rows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
-  let filtered = rows;
-  if (state.chartInstance) {
-    filtered = rows.filter((r) => r.instance === state.chartInstance);
-  }
-  renderSpeedChart8h(buildMinuteSpeedSeries(filtered));
+async function loadSpeedChart8hFromRows(rows) {
+  renderSpeedChart8h(buildMinuteSpeedSeries(filterSamplesByInstance(rows)));
 }
 
 async function loadCharts() {
-  await Promise.all([loadTransferChart(), loadSpeedChart8h()]);
+  const useHourly = state.range === "month" || state.range === "all";
+  if (useHourly) {
+    const { rows, useHourly: hourly } = await loadSamplesForRange(state.range);
+    await loadTransferChartFromRows(rows, hourly);
+    const from8h = rangeStart("8h");
+    const filter = `recorded_at >= "${toPbFilterDate(from8h)}"`;
+    const speedRows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
+    await loadSpeedChart8hFromRows(speedRows);
+    return;
+  }
+
+  const fromTransfer = rangeStart(state.range);
+  const from8h = rangeStart("8h");
+  const earliest =
+    fromTransfer.getTime() > 0 && fromTransfer.getTime() < from8h.getTime() ? fromTransfer : from8h;
+  const filter =
+    earliest.getTime() > 0 ? `recorded_at >= "${toPbFilterDate(earliest)}"` : "";
+  const rows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
+  await Promise.all([
+    loadTransferChartFromRows(rows, false),
+    loadSpeedChart8hFromRows(rows),
+  ]);
 }
 
 async function refresh() {
-  const footer = document.getElementById("footer-status");
-  footer.textContent = "Laden…";
+  setFooterStatus("Instances laden…");
   try {
     state.instances = await listAll("instances", { sort: "name" });
     syncInstanceSelect();
+    renderOverview({
+      links: [],
+      instances: [],
+      diagnostics: { hints: ["Topologie laden…"] },
+    });
+
+    const chartsPromise = loadCharts().catch((err) => {
+      console.error("charts", err);
+      setFooterStatus(`Grafieken: ${err.message}`);
+    });
+
+    setFooterStatus("Topologie laden…");
     const topology = await loadTopology();
     renderOverview(topology);
-    await loadCharts();
-    footer.textContent = `Bijgewerkt ${new Date().toLocaleString()} · collector: long-poll events + ${document.body.dataset.sampleInterval || "60"}s samples`;
+    setFooterStatus(
+      `Bijgewerkt ${new Date().toLocaleString()} · collector: long-poll events + ${document.body.dataset.sampleInterval || "60"}s samples`
+    );
+    await chartsPromise;
   } catch (err) {
-    footer.textContent = err.message;
+    setFooterStatus(err.message);
     console.error(err);
   }
 }
