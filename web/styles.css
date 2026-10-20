@@ -274,6 +274,78 @@ code {
   font-size: 0.72rem;
 }
 
+.btn-compact {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.78rem;
+  margin: 0.35rem 0 0.5rem;
+}
+
+.folder-browse {
+  margin: 0.35rem 0 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.browse-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.browse-current {
+  font-size: 0.78rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+}
+
+.browse-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+
+.browse-entries li {
+  border-bottom: 1px solid var(--line);
+}
+
+.browse-entries li:last-child {
+  border-bottom: none;
+}
+
+.browse-dir {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.browse-dir:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.browse-error {
+  color: var(--danger);
+  margin-top: 0.35rem;
+}
+
+.browse-selected code {
+  word-break: break-all;
+}
+
 .dim {
   color: var(--dim);
 }

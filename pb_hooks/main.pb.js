@@ -22,3 +22,13 @@ routerAdd("POST", "/api/syncms/config/restore", (c) => {
   const api = require(`${__hooks}/syncms_api.js`);
   return api.restoreConfig(c);
 });
+
+routerAdd("GET", "/api/syncms/instances/{instanceId}/browse", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.instanceBrowse(c);
+});
+
+routerAdd("GET", "/api/syncms/instances/{instanceId}/folders", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.instanceFolders(c);
+});
