@@ -3,6 +3,7 @@ const state = {
   topology: { links: [] },
   nodeLayout: {},
   topoErrors: {},
+  foldersByInstance: {},
   instanceTransferStats: {},
   selectedInstanceId: null,
   range: "24h",
@@ -139,23 +140,44 @@ async function loadInstanceTransferStats(instanceId) {
   };
 }
 
-function buildInstancePeriodStatsHtml(label, totals) {
-  return `
-    <section class="instance-period-block">
-      <h4 class="detail-subhead">${escapeHtml(label)}</h4>
-      <dl class="stat-grid period-stats">
-        <dt>Ontvangen</dt><dd>${formatBytes(totals.inBytes)}</dd>
-        <dt>Verzonden</dt><dd>${formatBytes(totals.outBytes)}</dd>
-      </dl>
-    </section>`;
+function renderInstanceStatsBody(stats) {
+  const row = (label, totals) =>
+    `<tr><th scope="row">${escapeHtml(label)}</th><td class="num">${formatBytes(totals.inBytes)}</td><td class="num">${formatBytes(totals.outBytes)}</td></tr>`;
+  return `<table class="transfer-period-table">
+    <thead><tr><th scope="col">Periode</th><th scope="col">Ontvangen</th><th scope="col">Verzonden</th></tr></thead>
+    <tbody>
+      ${row("24 uur", stats.h24)}
+      ${row("7 dagen", stats.d7)}
+      ${row("31 dagen", stats.d31)}
+    </tbody>
+  </table>
+  <p class="hint tiny stats-footnote">Som van deltas · 31 dagen via uuraggregatie</p>`;
 }
 
-function renderInstanceStatsBody(stats) {
-  return (
-    buildInstancePeriodStatsHtml("Laatste 24 uur", stats.h24) +
-    buildInstancePeriodStatsHtml("Laatste 7 dagen", stats.d7) +
-    buildInstancePeriodStatsHtml("Laatste 31 dagen", stats.d31)
-  );
+function buildFolderListHtml(folders) {
+  if (!folders.length) {
+    return `<p class="hint small folder-list-empty">Geen mappen geladen.</p>`;
+  }
+  return `<div class="folder-list-compact">${folders
+    .map((f) => {
+      const label =
+        f.label && f.label !== f.id ? ` <span class="folder-label">${escapeHtml(f.label)}</span>` : "";
+      return `<details class="folder-item-compact">
+        <summary><code>${escapeHtml(f.id)}</code>${label}</summary>
+        <p class="folder-path mono wrap">${escapeHtml(f.path || "—")}</p>
+      </details>`;
+    })
+    .join("")}</div>`;
+}
+
+async function refreshInstanceFolders(instanceId) {
+  const data = await pbRequest(`/api/syncms/instances/${encodeURIComponent(instanceId)}/folders`);
+  if (data.folders) state.foldersByInstance[instanceId] = data.folders;
+  const el = document.getElementById("detail-folder-config");
+  if (el && state.selectedInstanceId === instanceId) {
+    el.innerHTML = buildFolderListHtml(data.folders || []);
+  }
+  return data;
 }
 
 function renderInstanceStatsPanel(inst) {
@@ -163,20 +185,46 @@ function renderInstanceStatsPanel(inst) {
   if (!panel) return;
 
   if (!inst) {
-    panel.innerHTML = `<p class="hint">Transfer-statistieken verschijnen hier na selectie.</p>`;
+    panel.innerHTML = `<p class="hint">Mappen en transfer-statistieken verschijnen hier na selectie.</p>`;
     return;
   }
 
+  const folders = state.foldersByInstance[inst.id] || [];
+  const foldersHtml = buildFolderListHtml(folders);
+
   panel.innerHTML = `
-    <h3 class="stats-col-title">Transfer — ${escapeHtml(inst.name)}</h3>
-    <p class="hint small">Som van gemeten deltas (collector). 31 dagen via uuraggregatie.</p>
-    <div id="instance-stats-body"><p class="hint small">Laden…</p></div>
-    <button type="button" class="btn ghost btn-compact" id="instance-stats-refresh">Vernieuwen</button>`;
+    <h3 class="stats-col-title">${escapeHtml(inst.name)}</h3>
+    <section class="instance-stats-block">
+      <h4 class="detail-subhead compact">Syncthing-mappen</h4>
+      <div id="detail-folder-config">${foldersHtml}</div>
+      <button type="button" class="btn ghost btn-compact" id="detail-btn-refresh-folders">Vernieuw mappenlijst</button>
+    </section>
+    <section class="instance-stats-block">
+      <h4 class="detail-subhead compact">Transfer</h4>
+      <div id="instance-stats-body"><p class="hint small">Laden…</p></div>
+      <button type="button" class="btn ghost btn-compact" id="instance-stats-refresh">Vernieuw statistieken</button>
+    </section>`;
+
+  document.getElementById("detail-btn-refresh-folders")?.addEventListener("click", async () => {
+    const btn = document.getElementById("detail-btn-refresh-folders");
+    if (btn) btn.disabled = true;
+    try {
+      await refreshInstanceFolders(inst.id);
+    } catch (err) {
+      alert(`Mappenlijst: ${err.message}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
 
   document.getElementById("instance-stats-refresh")?.addEventListener("click", () => {
     delete state.instanceTransferStats[inst.id];
     loadAndShowInstanceStats(inst, true);
   });
+
+  if (!state.foldersByInstance[inst.id]?.length) {
+    refreshInstanceFolders(inst.id).catch(() => {});
+  }
 
   loadAndShowInstanceStats(inst, false);
 }
@@ -843,8 +891,10 @@ function renderOverview(topology) {
   state.topology = topology || { links: [] };
 
   state.topoErrors = {};
+  state.foldersByInstance = {};
   for (const ti of topology.instances || []) {
     if (ti.error) state.topoErrors[ti.instanceId] = ti.error;
+    state.foldersByInstance[ti.instanceId] = ti.folders || [];
   }
   if (topology.diagnostics?.hookError) {
     state.topoErrors.__hook = topology.diagnostics.hookError;
