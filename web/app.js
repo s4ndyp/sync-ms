@@ -567,23 +567,39 @@ function getBrowseState(instanceId) {
   return state.folderBrowseByInstance[instanceId];
 }
 
+function isBrowseAtRoot(current) {
+  return current === "" || current === null || current === undefined;
+}
+
 function browsePathLabel(current) {
-  if (!current) return "(roots — kies een schijf of map)";
+  if (isBrowseAtRoot(current)) return "(root — kies een map, klik daarna op Geselecteerde map om erin te gaan)";
   return current;
 }
 
-function browseParentPath(current) {
-  if (!current || current === "~") return "";
-  let p = String(current).replace(/\\/g, "/");
-  const hadTrailing = p.endsWith("/");
-  if (hadTrailing && p.length > 1) p = p.slice(0, -1);
-  const idx = p.lastIndexOf("/");
-  if (idx <= 0) {
-    if (p.startsWith("/") && p.length === 1) return "";
-    return "/";
+/** Syncthing browse expects directory paths; trailing separator helps list children. */
+function normalizeBrowseCurrent(path) {
+  if (isBrowseAtRoot(path)) return "";
+  const p = String(path);
+  if (p === "~") return "~";
+  if (p.endsWith("/") || p.endsWith("\\")) return p;
+  if (/^[A-Za-z]:\\?/.test(p)) {
+    return p.replace(/\/?$/, "\\");
   }
-  const parent = p.slice(0, idx + 1);
-  return parent || "/";
+  if (p.startsWith("/")) return p + "/";
+  return p + "/";
+}
+
+function pathsBrowseEqual(a, b) {
+  return normalizeBrowseCurrent(a) === normalizeBrowseCurrent(b);
+}
+
+function updateBrowseSelectedUi(instanceId) {
+  const bs = getBrowseState(instanceId);
+  const selectedBtn = document.getElementById("browse-selected-path");
+  if (selectedBtn) {
+    selectedBtn.textContent = bs.selected || "—";
+    selectedBtn.disabled = !bs.selected;
+  }
 }
 
 async function refreshInstanceFolders(instanceId) {
@@ -628,34 +644,55 @@ async function loadBrowseDirectory(instanceId, current) {
   }
 
   const entries = data.entries || [];
+  const atRoot = isBrowseAtRoot(current);
   if (listEl) {
     if (!entries.length) {
       listEl.innerHTML = `<li class="hint small">Geen submappen.</li>`;
     } else {
       listEl.innerHTML = entries
-        .map(
-          (entry) =>
-            `<li><button type="button" class="browse-dir" data-path="${escapeAttr(entry)}">${escapeHtml(entry)}</button></li>`
-        )
+        .map((entry) => {
+          const selected =
+            atRoot && bs.selected && pathsBrowseEqual(entry, bs.selected)
+              ? " browse-dir-selected"
+              : "";
+          return `<li><button type="button" class="browse-dir${selected}" data-path="${escapeAttr(entry)}">${escapeHtml(entry)}</button></li>`;
+        })
         .join("");
       listEl.querySelectorAll(".browse-dir").forEach((btn) => {
         btn.addEventListener("click", () => {
-          loadBrowseDirectory(instanceId, btn.getAttribute("data-path") || "");
+          const path = btn.getAttribute("data-path") || "";
+          if (isBrowseAtRoot(bs.current)) {
+            bs.selected = path;
+            updateBrowseSelectedUi(instanceId);
+            listEl.querySelectorAll(".browse-dir").forEach((b) => {
+              b.classList.toggle(
+                "browse-dir-selected",
+                pathsBrowseEqual(b.getAttribute("data-path") || "", path)
+              );
+            });
+            return;
+          }
+          bs.selected = path;
+          updateBrowseSelectedUi(instanceId);
+          loadBrowseDirectory(instanceId, normalizeBrowseCurrent(path));
         });
       });
     }
   }
 
   if (selectBtn) {
-    selectBtn.disabled = false;
+    selectBtn.disabled = isBrowseAtRoot(current);
   }
 
-  const selectedEl = document.getElementById("browse-selected-path");
-  if (selectedEl) {
-    selectedEl.textContent = bs.selected || "—";
-  }
+  updateBrowseSelectedUi(instanceId);
 
   return data;
+}
+
+function drillIntoSelectedPath(instanceId) {
+  const bs = getBrowseState(instanceId);
+  if (!bs.selected) return;
+  loadBrowseDirectory(instanceId, normalizeBrowseCurrent(bs.selected));
 }
 
 function setupFolderBrowse(inst) {
@@ -667,7 +704,7 @@ function setupFolderBrowse(inst) {
     loadBrowseDirectory(inst.id, "~");
   });
   document.getElementById("browse-btn-up")?.addEventListener("click", () => {
-    loadBrowseDirectory(inst.id, browseParentPath(bs.current));
+    loadBrowseDirectory(inst.id, "");
   });
   document.getElementById("browse-btn-reload")?.addEventListener("click", () => {
     loadBrowseDirectory(inst.id, bs.current);
@@ -685,9 +722,13 @@ function setupFolderBrowse(inst) {
   });
 
   selectBtn?.addEventListener("click", () => {
-    const path = bs.current || "";
-    bs.selected = path;
-    if (selectedEl) selectedEl.textContent = path || "(root)";
+    if (isBrowseAtRoot(bs.current)) return;
+    bs.selected = bs.current;
+    updateBrowseSelectedUi(inst.id);
+  });
+
+  selectedEl?.addEventListener("click", () => {
+    drillIntoSelectedPath(inst.id);
   });
 
   loadBrowseDirectory(inst.id, bs.current).catch((err) => {
@@ -754,8 +795,12 @@ function renderInstanceDetail() {
       </div>
       <p class="browse-current mono wrap" id="browse-current-path">${escapeHtml(browsePathLabel(bs.current))}</p>
       <ul class="browse-entries" id="browse-entries"><li class="hint small">Laden…</li></ul>
-      <p class="hint small browse-selected">Gekozen pad (voor later): <code id="browse-selected-path">${escapeHtml(bs.selected || "—")}</code></p>
-      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Dit pad onthouden</button>
+      <p class="hint small browse-selected">
+        Geselecteerde map:
+        <button type="button" class="browse-selected-path" id="browse-selected-path" ${bs.selected ? "" : "disabled"} title="Klik om submappen te tonen">${escapeHtml(bs.selected || "—")}</button>
+      </p>
+      <p class="hint small">In root: kies een map in de lijst, klik dan op <em>Geselecteerde map</em>. <em>Omhoog</em> = terug naar root.</p>
+      <button type="button" class="btn ghost btn-compact" id="browse-btn-select">Huidige map onthouden</button>
       <p class="hint small browse-error" id="browse-error" hidden></p>
     </div>
 
