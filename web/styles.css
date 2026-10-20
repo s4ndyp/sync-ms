@@ -389,6 +389,61 @@ code {
   word-break: break-all;
 }
 
+.share-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+
+.share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.share-field input {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.share-partners-fieldset {
+  margin: 0.25rem 0 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.share-partners-fieldset legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0 0.25rem;
+}
+
+.share-partners-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.share-partner {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .dim {
   color: var(--dim);
 }

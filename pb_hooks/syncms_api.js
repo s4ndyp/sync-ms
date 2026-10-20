@@ -24,12 +24,21 @@ function normalizeDeviceId(id) {
 }
 
 function stRequest(baseUrl, apiKey, path) {
-  return $http.send({
+  return stApi(baseUrl, apiKey, "GET", path);
+}
+
+function stApi(baseUrl, apiKey, method, path, bodyObj) {
+  const opts = {
     url: `${baseUrl}${path}`,
-    method: "GET",
+    method: method,
     headers: { "X-API-Key": apiKey },
-    timeout: 12,
-  });
+    timeout: 20,
+  };
+  if (bodyObj !== undefined && bodyObj !== null) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(bodyObj);
+  }
+  return $http.send(opts);
 }
 
 function stBrowse(baseUrl, apiKey, current) {
@@ -654,6 +663,254 @@ function restoreConfig(c) {
   });
 }
 
+function resolveSyncthingDeviceId(cred) {
+  let id = String(cred.rec.get("syncthing_id") || "").trim();
+  if (id) return id;
+  try {
+    const st = stRequest(cred.baseUrl, cred.apiKey, "/rest/system/status");
+    if (st.statusCode === 200) {
+      id = JSON.parse(st.raw || "{}").myID || "";
+    }
+  } catch (_) {}
+  return id;
+}
+
+function sanitizeFolderId(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function mergeFolderDevices(existingDevices, remoteDeviceIds) {
+  const list = [];
+  const seen = {};
+  const src = existingDevices || [];
+  for (let i = 0; i < src.length; i++) {
+    const d = src[i];
+    const id = d.deviceID || d.deviceId;
+    if (!id) continue;
+    const norm = normalizeDeviceId(id);
+    if (seen[norm]) continue;
+    seen[norm] = true;
+    list.push({ deviceID: id });
+  }
+  for (let j = 0; j < remoteDeviceIds.length; j++) {
+    const id = remoteDeviceIds[j];
+    if (!id) continue;
+    const norm = normalizeDeviceId(id);
+    if (seen[norm]) continue;
+    seen[norm] = true;
+    list.push({ deviceID: id });
+  }
+  return list;
+}
+
+function ensureRemoteDevice(baseUrl, apiKey, remoteDeviceId, remoteName) {
+  const enc = encodeURIComponent(remoteDeviceId);
+  const existing = stRequest(baseUrl, apiKey, "/rest/config/devices/" + enc);
+  if (existing.statusCode === 200) return { ok: true };
+
+  const defRes = stRequest(baseUrl, apiKey, "/rest/config/defaults/device");
+  if (defRes.statusCode !== 200) {
+    return { ok: false, error: "defaults/device HTTP " + defRes.statusCode };
+  }
+  let dev;
+  try {
+    dev = JSON.parse(defRes.raw || "{}");
+  } catch (_) {
+    return { ok: false, error: "defaults/device parse" };
+  }
+  dev.deviceID = remoteDeviceId;
+  dev.name = remoteName || remoteDeviceId.slice(0, 11);
+
+  const post = stApi(baseUrl, apiKey, "POST", "/rest/config/devices", dev);
+  if (post.statusCode >= 200 && post.statusCode < 300) return { ok: true };
+  const snippet = (post.raw || "").slice(0, 200);
+  return { ok: false, error: "device POST HTTP " + post.statusCode + snippet };
+}
+
+function upsertFolderShare(baseUrl, apiKey, folderId, label, folderPath, remoteDeviceIds) {
+  const enc = encodeURIComponent(folderId);
+  let folder = null;
+  let existed = false;
+
+  const getRes = stRequest(baseUrl, apiKey, "/rest/config/folders/" + enc);
+  if (getRes.statusCode === 200) {
+    existed = true;
+    try {
+      folder = JSON.parse(getRes.raw || "{}");
+    } catch (_) {
+      folder = null;
+    }
+  }
+
+  if (!folder) {
+    const defRes = stRequest(baseUrl, apiKey, "/rest/config/defaults/folder");
+    if (defRes.statusCode !== 200) {
+      return { ok: false, error: "defaults/folder HTTP " + defRes.statusCode };
+    }
+    try {
+      folder = JSON.parse(defRes.raw || "{}");
+    } catch (_) {
+      return { ok: false, error: "defaults/folder parse" };
+    }
+    folder.id = folderId;
+  }
+
+  folder.label = label || folder.label || folderId;
+  folder.path = folderPath;
+  folder.type = folder.type || "sendreceive";
+  folder.devices = mergeFolderDevices(folder.devices, remoteDeviceIds);
+
+  const res = stApi(baseUrl, apiKey, "POST", "/rest/config/folders", folder);
+  if (res.statusCode >= 200 && res.statusCode < 300) {
+    return { ok: true, existed: existed };
+  }
+  const snippet = (res.raw || "").slice(0, 240);
+  return { ok: false, error: "folder POST HTTP " + res.statusCode + (snippet ? " — " + snippet : "") };
+}
+
+function applyFolderShare(c) {
+  const sourceId = c.request.pathValue("instanceId");
+  const body = readJson(c);
+  const folderId = sanitizeFolderId(body.folder_id || body.folderId);
+  const label = String(body.label || folderId || "").trim();
+  const sourcePath = String(body.source_path || body.sourcePath || "").trim();
+  const partnerPath = String(body.partner_path || body.partnerPath || "").trim();
+  const partnerIds = body.partner_instance_ids || body.partnerInstanceIds || [];
+
+  if (!folderId) {
+    return c.json(400, { ok: false, error: "folder_id is verplicht" });
+  }
+  if (!sourcePath) {
+    return c.json(400, { ok: false, error: "source_path is verplicht (kies map in browser)" });
+  }
+  if (!Array.isArray(partnerIds) || partnerIds.length === 0) {
+    return c.json(400, { ok: false, error: "Selecteer minimaal één partner-instance" });
+  }
+
+  const sourceCred = loadInstanceCredentials(sourceId);
+  if (sourceCred.error) {
+    return c.json(400, { ok: false, error: sourceCred.error });
+  }
+
+  const sourceDevId = resolveSyncthingDeviceId(sourceCred);
+  if (!sourceDevId) {
+    return c.json(400, { ok: false, error: "syncthing_id onbekend op bron-instance" });
+  }
+
+  const partners = [];
+  for (let i = 0; i < partnerIds.length; i++) {
+    const pid = String(partnerIds[i] || "").trim();
+    if (!pid || pid === sourceId) continue;
+    const cred = loadInstanceCredentials(pid);
+    if (cred.error) {
+      return c.json(400, { ok: false, error: cred.error + " (partner)" });
+    }
+    const devId = resolveSyncthingDeviceId(cred);
+    if (!devId) {
+      return c.json(400, {
+        ok: false,
+        error: "syncthing_id onbekend op partner: " + cred.name,
+      });
+    }
+    partners.push({ cred: cred, deviceId: devId });
+  }
+
+  if (!partners.length) {
+    return c.json(400, { ok: false, error: "Geen geldige partners" });
+  }
+
+  const partnerDevIds = [];
+  for (let p = 0; p < partners.length; p++) {
+    partnerDevIds.push(partners[p].deviceId);
+  }
+
+  const steps = [];
+
+  for (let p = 0; p < partners.length; p++) {
+    const peer = partners[p];
+    const a = ensureRemoteDevice(sourceCred.baseUrl, sourceCred.apiKey, peer.deviceId, peer.cred.name);
+    if (!a.ok) {
+      return c.json(200, {
+        ok: false,
+        error: sourceCred.name + ": device " + peer.cred.name + " — " + a.error,
+        steps: steps,
+      });
+    }
+    const b = ensureRemoteDevice(peer.cred.baseUrl, peer.cred.apiKey, sourceDevId, sourceCred.name);
+    if (!b.ok) {
+      return c.json(200, {
+        ok: false,
+        error: peer.cred.name + ": device " + sourceCred.name + " — " + b.error,
+        steps: steps,
+      });
+    }
+  }
+
+  const onSource = upsertFolderShare(
+    sourceCred.baseUrl,
+    sourceCred.apiKey,
+    folderId,
+    label,
+    sourcePath,
+    partnerDevIds
+  );
+  steps.push({
+    instance: sourceCred.name,
+    role: "source",
+    ok: onSource.ok,
+    error: onSource.error || "",
+  });
+  if (!onSource.ok) {
+    return c.json(200, { ok: false, error: onSource.error, steps: steps });
+  }
+
+  const defaultPartnerPath = partnerPath || "~/" + folderId;
+
+  for (let p = 0; p < partners.length; p++) {
+    const peer = partners[p];
+    const customPath =
+      body.partner_paths && body.partner_paths[peer.cred.instanceId]
+        ? String(body.partner_paths[peer.cred.instanceId]).trim()
+        : defaultPartnerPath;
+    const onPeer = upsertFolderShare(
+      peer.cred.baseUrl,
+      peer.cred.apiKey,
+      folderId,
+      label,
+      customPath,
+      [sourceDevId]
+    );
+    steps.push({
+      instance: peer.cred.name,
+      role: "partner",
+      path: customPath,
+      ok: onPeer.ok,
+      error: onPeer.error || "",
+    });
+    if (!onPeer.ok) {
+      return c.json(200, {
+        ok: false,
+        error: peer.cred.name + ": " + onPeer.error,
+        steps: steps,
+        partial: true,
+      });
+    }
+  }
+
+  return c.json(200, {
+    ok: true,
+    folderId: folderId,
+    label: label,
+    sourcePath: sourcePath,
+    partnerPath: defaultPartnerPath,
+    steps: steps,
+  });
+}
+
 function instanceBrowse(c) {
   const instanceId = c.request.pathValue("instanceId");
   const cred = loadInstanceCredentials(instanceId);
@@ -693,7 +950,7 @@ function instanceBrowse(c) {
       current: current,
       entries: entries,
       readOnly: true,
-      hint: "Fase A: alleen lezen. Sync naar partners komt in een latere fase.",
+      hint: "Browse read-only; gebruik fase B om sync toe te passen.",
     });
   } catch (err) {
     return c.json(200, {
@@ -764,4 +1021,5 @@ module.exports = {
   restoreConfig,
   instanceBrowse,
   instanceFolders,
+  applyFolderShare,
 };
