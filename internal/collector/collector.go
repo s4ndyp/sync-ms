@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/s4ndyp/sync-ms/internal/disk"
 	"github.com/s4ndyp/sync-ms/internal/pbstore"
 	"github.com/s4ndyp/sync-ms/internal/syncthing"
 )
@@ -205,10 +204,6 @@ func (c *Collector) takeSample(ctx context.Context, inst pbstore.Instance, clien
 
 	st, _ := client.SystemStatus(ctx)
 	version, _ := client.SystemVersion(ctx)
-	homeDir := ""
-	if st != nil {
-		homeDir = st.Tilde
-	}
 	syncthingID := inst.SyncthingID
 	if st != nil && st.MyID != "" {
 		syncthingID = st.MyID
@@ -257,7 +252,6 @@ func (c *Collector) takeSample(ctx context.Context, inst pbstore.Instance, clien
 		"out_speed_bps":   outSpeed,
 	}); err != nil {
 		log.Printf("collector: sample %s: %v", inst.Name, err)
-		c.takeFolderDiskSamples(ctx, inst, client, homeDir, recorded)
 		return
 	}
 
@@ -288,43 +282,6 @@ func (c *Collector) takeSample(ctx context.Context, inst pbstore.Instance, clien
 
 	if inDelta > 0 || outDelta > 0 {
 		c.rollupHour(ctx, inst.ID, now, inDelta, outDelta)
-	}
-
-	c.takeFolderDiskSamples(ctx, inst, client, homeDir, recorded)
-}
-
-func (c *Collector) takeFolderDiskSamples(ctx context.Context, inst pbstore.Instance, client *syncthing.Client, homeDir, recorded string) {
-	folders, err := client.ConfigFolders(ctx)
-	if err != nil {
-		return
-	}
-	for _, f := range folders {
-		if f.ID == "" {
-			continue
-		}
-		resolved, err := disk.ResolveExistingPath(f.Path, homeDir)
-		if err != nil {
-			continue
-		}
-		free, total, err := disk.Usage(resolved)
-		if err != nil {
-			continue
-		}
-		label := f.Label
-		if label == "" {
-			label = f.ID
-		}
-		if err := c.store.CreateFolderDiskSample(ctx, map[string]any{
-			"instance":      inst.ID,
-			"folder_id":     f.ID,
-			"folder_label":  label,
-			"recorded_at":   recorded,
-			"free_bytes":    free,
-			"total_bytes":   total,
-			"source":        "collector",
-		}); err != nil {
-			log.Printf("collector: folder disk %s/%s: %v", inst.Name, f.ID, err)
-		}
 	}
 }
 

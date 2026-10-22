@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync-MS folder disk report every minute
+
+[Timer]
+Unit=sync-ms-folder-disk-agent.service
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

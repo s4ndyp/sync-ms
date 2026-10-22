@@ -43,13 +43,6 @@ type SystemStatus struct {
 	TCPAddress string    `json:"tcpAddress"`
 	Uptime     int       `json:"uptime"`
 	StartTime  time.Time `json:"startTime"`
-	Tilde      string    `json:"tilde"`
-}
-
-type FolderConfig struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
 }
 
 func (c *Client) SystemVersion(ctx context.Context) (string, error) {
@@ -105,23 +98,6 @@ type ConnectionTotals struct {
 	At            time.Time `json:"at"`
 	InBytesTotal  int64     `json:"inBytesTotal"`
 	OutBytesTotal int64     `json:"outBytesTotal"`
-}
-
-func (c *Client) ConfigFolders(ctx context.Context) ([]FolderConfig, error) {
-	res, err := c.do(ctx, http.MethodGet, "/rest/config/folders")
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return nil, fmt.Errorf("config/folders: %s (%s)", res.Status, strings.TrimSpace(string(body)))
-	}
-	var out []FolderConfig
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *Client) SystemConnections(ctx context.Context) (*ConnectionsResponse, error) {

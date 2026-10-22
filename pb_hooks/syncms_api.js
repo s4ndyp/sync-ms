@@ -1115,21 +1115,60 @@ function instanceBrowse(c) {
   }
 }
 
-function pushFolderDisk(c) {
-  const instanceId = c.request.pathValue("instanceId");
-  const cred = loadInstanceCredentials(instanceId);
-  if (cred.error) {
-    return c.json(400, { ok: false, error: cred.error, created: 0 });
+function findInstanceRecordForDiskReport(body) {
+  const instanceId = String(body.instance_id || "").trim();
+  if (instanceId) {
+    try {
+      return $app.findRecordById("instances", instanceId);
+    } catch (_) {
+      return null;
+    }
   }
+  const deviceRaw = String(body.device_id || body.syncthing_id || body.my_id || "").trim();
+  if (!deviceRaw) return null;
+  const norm = normalizeDeviceId(deviceRaw);
+  const all = listAllInstances();
+  for (let i = 0; i < all.length; i++) {
+    const rec = all[i];
+    const sid = normalizeDeviceId(String(rec.get("syncthing_id") || ""));
+    if (sid && sid === norm) return rec;
+  }
+  for (let j = 0; j < all.length; j++) {
+    const rec = all[j];
+    if (rec.get("enabled") === false) continue;
+    const baseUrl = normalizeBaseUrl(rec.get("base_url"));
+    const apiKey = String(rec.get("api_key") || "").trim();
+    if (!baseUrl || !apiKey) continue;
+    const st = stRequest(baseUrl, apiKey, "/rest/system/status");
+    if (st.statusCode !== 200) continue;
+    let myID = "";
+    try {
+      myID = normalizeDeviceId(JSON.parse(st.raw || "{}").myID || "");
+    } catch (_) {
+      myID = "";
+    }
+    if (myID !== norm) continue;
+    const rawId = String(JSON.parse(st.raw || "{}").myID || "").trim();
+    if (rawId && !String(rec.get("syncthing_id") || "").trim()) {
+      rec.set("syncthing_id", rawId);
+      try {
+        $app.save(rec);
+      } catch (_) {}
+    }
+    return rec;
+  }
+  return null;
+}
 
-  const body = readJson(c);
+function saveFolderDiskSamples(instanceId, body, source) {
   const items = Array.isArray(body.folders) ? body.folders : [];
   if (!items.length) {
-    return c.json(400, {
+    return {
       ok: false,
       error: "folders[] vereist (folder_id, free_bytes; optioneel folder_label, total_bytes).",
       created: 0,
-    });
+      errors: [],
+    };
   }
 
   const collection = $app.findCollectionByNameOrId("folder_disk_samples");
@@ -1140,6 +1179,7 @@ function pushFolderDisk(c) {
 
   let created = 0;
   const errors = [];
+  const src = String(source || "api").slice(0, 32);
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i] || {};
@@ -1168,13 +1208,13 @@ function pushFolderDisk(c) {
 
     try {
       const rec = new Record(collection);
-      rec.set("instance", cred.instanceId);
+      rec.set("instance", instanceId);
       rec.set("folder_id", folderId);
       rec.set("folder_label", label);
       rec.set("recorded_at", recorded);
       rec.set("free_bytes", freeBytes);
       if (totalBytes !== null) rec.set("total_bytes", totalBytes);
-      rec.set("source", "push");
+      rec.set("source", src);
       $app.save(rec);
       created++;
     } catch (err) {
@@ -1182,12 +1222,72 @@ function pushFolderDisk(c) {
     }
   }
 
-  return c.json(200, {
+  return {
     ok: created > 0 || errors.length === 0,
-    instanceId: cred.instanceId,
-    instanceName: cred.name,
     created,
     errors,
+  };
+}
+
+/** Agent on Syncthing host: POST folders[] + device_id (Syncthing myID) or instance_id. */
+function folderDiskReport(c) {
+  const body = readJson(c);
+  const instRec = findInstanceRecordForDiskReport(body);
+  if (!instRec) {
+    return c.json(404, {
+      ok: false,
+      error:
+        "Geen instance gevonden. Zet device_id (Syncthing myID) of instance_id in het verzoek; " +
+        "syncthing_id moet op de instance staan (collector of Verbinding testen).",
+      created: 0,
+    });
+  }
+
+  const result = saveFolderDiskSamples(instRec.id, body, "agent");
+  if (result.error) {
+    return c.json(400, {
+      ok: false,
+      error: result.error,
+      instanceId: instRec.id,
+      instanceName: instRec.get("name") || instRec.id,
+      created: 0,
+    });
+  }
+
+  return c.json(200, {
+    ok: result.ok,
+    instanceId: instRec.id,
+    instanceName: instRec.get("name") || instRec.id,
+    created: result.created,
+    errors: result.errors,
+  });
+}
+
+function pushFolderDisk(c) {
+  const instanceId = c.request.pathValue("instanceId");
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error, created: 0 });
+  }
+
+  const body = readJson(c);
+  const result = saveFolderDiskSamples(cred.instanceId, body, "api");
+  if (result.error) {
+    return c.json(400, {
+      ok: false,
+      error: result.error,
+      instanceId: cred.instanceId,
+      instanceName: cred.name,
+      created: 0,
+    });
+  }
+
+  return c.json(200, {
+    ok: result.ok,
+    instanceId: cred.instanceId,
+    instanceName: cred.name,
+    created: result.created,
+    errors: result.errors,
   });
 }
 
@@ -1247,6 +1347,7 @@ module.exports = {
   restoreConfig,
   instanceBrowse,
   instanceFolders,
+  folderDiskReport,
   pushFolderDisk,
   applyAddFolder,
   applyFolderShare,

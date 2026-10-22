@@ -38,6 +38,11 @@ routerAdd("POST", "/api/syncms/instances/{instanceId}/folder-disk", (c) => {
   return api.pushFolderDisk(c);
 });
 
+routerAdd("POST", "/api/syncms/folder-disk-report", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.folderDiskReport(c);
+});
+
 routerAdd("POST", "/api/syncms/instances/{instanceId}/add-folder", (c) => {
   const api = require(`${__hooks}/syncms_api.js`);
   return api.applyAddFolder(c);

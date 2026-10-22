@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync-MS folder disk report (Syncthing host agent)
+After=network-online.target syncthing.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sync-ms/folder-disk.env
+ExecStart=/usr/local/bin/sync-ms-folder-disk-agent
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

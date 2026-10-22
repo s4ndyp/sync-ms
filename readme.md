@@ -74,18 +74,24 @@ Data: `instances`, `transfer_samples`, `transfer_hourly`, `folder_disk_samples`.
 
 ### Vrije schijfruimte per Syncthing-map
 
-Syncthing REST levert geen vrije schijfruimte. Sync-MS slaat metingen op in `folder_disk_samples`:
+Syncthing REST levert geen vrije schijfruimte. De **Sync-MS-server leest geen paden op Syncthing-hosts**; elke Syncthing-client draait een kleine **agent** die lokaal `df` doet en metingen stuurt naar `folder_disk_samples`.
 
-- **Collector** (zelfde host als Syncthing, pad bereikbaar): elke transfer-sample ook `statfs` op het map-pad.
-- **Push** vanaf de Syncthing-machine (cron/systemd):
+**Op elke Syncthing-host** (eenmalig):
 
 ```bash
-INSTANCE_ID="<pocketbase-instance-record-id>"
-PB="http://127.0.0.1:8096"
-# Voorbeeld: één map — vul free_bytes (en optioneel total_bytes) in
-curl -sS -X POST "$PB/api/syncms/instances/$INSTANCE_ID/folder-disk" \
-  -H 'Content-Type: application/json' \
-  -d '{"folders":[{"folder_id":"default","folder_label":"Documents","free_bytes":1234567890,"total_bytes":9876543210}]}'
+git clone https://github.com/s4ndyp/sync-ms.git   # of kopieer alleen scripts/ + deploy/
+cd sync-ms
+sudo bash deploy/install-folder-disk-agent.sh
+sudo nano /etc/sync-ms/folder-disk.env   # SYNC_MS_URL + SYNCTHING_API_KEY
+sudo sync-ms-folder-disk-agent           # test
 ```
+
+De agent:
+
+- leest Syncthing `/rest/config/folders` en meet vrije ruimte op elk map-pad;
+- koppelt aan Sync-MS via **Syncthing device ID** (`myID`) — zorg dat de instance in Sync-MS al `syncthing_id` heeft (collector of **Verbinding testen**);
+- optioneel extra paden in `/etc/sync-ms/folder-disk-extra.paths` (`folder_id|label|pad`).
+
+API (door de agent gebruikt): `POST /api/syncms/folder-disk-report` met `device_id` + `folders[]`. Handmatig kan ook `POST /api/syncms/instances/{id}/folder-disk`.
 
 In het dashboard volgen de grafieken per map dezelfde instance- en periode-filters als “Transferred bytes”.
