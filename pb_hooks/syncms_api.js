@@ -1115,6 +1115,82 @@ function instanceBrowse(c) {
   }
 }
 
+function pushFolderDisk(c) {
+  const instanceId = c.request.pathValue("instanceId");
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error, created: 0 });
+  }
+
+  const body = readJson(c);
+  const items = Array.isArray(body.folders) ? body.folders : [];
+  if (!items.length) {
+    return c.json(400, {
+      ok: false,
+      error: "folders[] vereist (folder_id, free_bytes; optioneel folder_label, total_bytes).",
+      created: 0,
+    });
+  }
+
+  const collection = $app.findCollectionByNameOrId("folder_disk_samples");
+  const recorded =
+    body.recorded_at && String(body.recorded_at).trim()
+      ? String(body.recorded_at).trim()
+      : new Date().toISOString();
+
+  let created = 0;
+  const errors = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] || {};
+    const folderId = String(item.folder_id || item.id || "").trim();
+    if (!folderId) {
+      errors.push("map zonder folder_id overgeslagen");
+      continue;
+    }
+    const freeBytes = Number(item.free_bytes);
+    if (!Number.isFinite(freeBytes) || freeBytes < 0) {
+      errors.push(`${folderId}: free_bytes ontbreekt of ongeldig`);
+      continue;
+    }
+    const totalRaw = item.total_bytes;
+    const totalBytes =
+      totalRaw === undefined || totalRaw === null || totalRaw === ""
+        ? null
+        : Number(totalRaw);
+    if (totalBytes !== null && (!Number.isFinite(totalBytes) || totalBytes < 0)) {
+      errors.push(`${folderId}: total_bytes ongeldig`);
+      continue;
+    }
+
+    let label = String(item.folder_label || item.label || "").trim();
+    if (!label) label = folderId;
+
+    try {
+      const rec = new Record(collection);
+      rec.set("instance", cred.instanceId);
+      rec.set("folder_id", folderId);
+      rec.set("folder_label", label);
+      rec.set("recorded_at", recorded);
+      rec.set("free_bytes", freeBytes);
+      if (totalBytes !== null) rec.set("total_bytes", totalBytes);
+      rec.set("source", "push");
+      $app.save(rec);
+      created++;
+    } catch (err) {
+      errors.push(`${folderId}: ${String(err)}`);
+    }
+  }
+
+  return c.json(200, {
+    ok: created > 0 || errors.length === 0,
+    instanceId: cred.instanceId,
+    instanceName: cred.name,
+    created,
+    errors,
+  });
+}
+
 function instanceFolders(c) {
   const instanceId = c.request.pathValue("instanceId");
   const cred = loadInstanceCredentials(instanceId);
@@ -1171,6 +1247,7 @@ module.exports = {
   restoreConfig,
   instanceBrowse,
   instanceFolders,
+  pushFolderDisk,
   applyAddFolder,
   applyFolderShare,
   autoPairDevices,

@@ -131,6 +131,15 @@ func (s *Store) DeleteSamplesBefore(ctx context.Context, before time.Time) (int,
 	return s.deleteByFilter(ctx, "transfer_samples", filter)
 }
 
+func (s *Store) CreateFolderDiskSample(ctx context.Context, sample map[string]any) error {
+	return s.createRecord(ctx, "folder_disk_samples", sample)
+}
+
+func (s *Store) DeleteFolderDiskSamplesBefore(ctx context.Context, before time.Time) (int, error) {
+	filter := fmt.Sprintf(`recorded_at < "%s"`, formatPBTime(before))
+	return s.deleteByFilter(ctx, "folder_disk_samples", filter)
+}
+
 func formatPBTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.000Z")
 }

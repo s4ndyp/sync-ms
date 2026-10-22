@@ -70,4 +70,22 @@ Browser → PocketBase (8090) → pb_public UI + API
          syncms-collector → Syncthing REST (events + connections)
 ```
 
-Data: `instances`, `transfer_samples`, `transfer_hourly`.
+Data: `instances`, `transfer_samples`, `transfer_hourly`, `folder_disk_samples`.
+
+### Vrije schijfruimte per Syncthing-map
+
+Syncthing REST levert geen vrije schijfruimte. Sync-MS slaat metingen op in `folder_disk_samples`:
+
+- **Collector** (zelfde host als Syncthing, pad bereikbaar): elke transfer-sample ook `statfs` op het map-pad.
+- **Push** vanaf de Syncthing-machine (cron/systemd):
+
+```bash
+INSTANCE_ID="<pocketbase-instance-record-id>"
+PB="http://127.0.0.1:8096"
+# Voorbeeld: één map — vul free_bytes (en optioneel total_bytes) in
+curl -sS -X POST "$PB/api/syncms/instances/$INSTANCE_ID/folder-disk" \
+  -H 'Content-Type: application/json' \
+  -d '{"folders":[{"folder_id":"default","folder_label":"Documents","free_bytes":1234567890,"total_bytes":9876543210}]}'
+```
+
+In het dashboard volgen de grafieken per map dezelfde instance- en periode-filters als “Transferred bytes”.
