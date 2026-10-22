@@ -258,6 +258,130 @@ function enrichFolderSharedWith(folder, deviceNames, byDevice) {
   folder.sharedWith = sharedWith;
 }
 
+const DISK_PROBE_PORT = 8765;
+
+function expandSyncthingPath(path, home) {
+  let p = String(path || "").trim();
+  if (!p) return p;
+  if (p === "~") return home ? home : p;
+  if (p.indexOf("~/") === 0) {
+    if (!home) return p;
+    return home.replace(/\/+$/, "") + "/" + p.slice(2);
+  }
+  return p;
+}
+
+function probeBaseURL(syncthingBaseUrl, diskProbeHost) {
+  const override = String(diskProbeHost || "").trim();
+  if (override) {
+    if (override.indexOf("http://") === 0 || override.indexOf("https://") === 0) {
+      return override.replace(/\/+$/, "");
+    }
+    if (override.indexOf(":") >= 0) {
+      return "http://" + override;
+    }
+    return "http://" + override + ":" + DISK_PROBE_PORT;
+  }
+  const base = normalizeBaseUrl(syncthingBaseUrl);
+  const m = base.match(/^https?:\/\/([^/]+)/i);
+  if (!m || !m[1]) return "";
+  const host = m[1].split(":")[0];
+  if (!host) return "";
+  return "http://" + host + ":" + DISK_PROBE_PORT;
+}
+
+function testDiskProbe(c) {
+  const instanceId = c.request.pathValue("instanceId");
+  const cred = loadInstanceCredentials(instanceId);
+  if (cred.error) {
+    return c.json(400, { ok: false, error: cred.error });
+  }
+  const diskProbeHost = String(cred.rec.get("disk_probe_host") || "").trim();
+  const probeBase = probeBaseURL(cred.baseUrl, diskProbeHost);
+  if (!probeBase) {
+    return c.json(200, { ok: false, error: "Kon probe-URL niet bepalen uit base_url / disk_probe_host" });
+  }
+
+  let healthOk = false;
+  let healthError = "";
+  try {
+    const h = $http.send({ url: probeBase + "/health", method: "GET", timeout: 15 });
+    healthOk = h.statusCode === 200;
+    if (!healthOk) healthError = "HTTP " + h.statusCode;
+  } catch (err) {
+    healthError = String(err);
+  }
+
+  let home = "";
+  const stRes = stRequest(cred.baseUrl, cred.apiKey, "/rest/system/status");
+  if (stRes.statusCode === 200) {
+    try {
+      home = JSON.parse(stRes.raw || "{}").tilde || "";
+    } catch (_) {
+      home = "";
+    }
+  }
+
+  const folderRes = mapConfigFolders(cred.baseUrl, cred.apiKey);
+  const items = [];
+  if (folderRes.ok && folderRes.folders) {
+    for (let i = 0; i < folderRes.folders.length; i++) {
+      const f = folderRes.folders[i];
+      const expanded = expandSyncthingPath(f.path, home);
+      if (!expanded || expanded === "~") continue;
+      items.push({
+        folder_id: f.id || "",
+        folder_label: f.label || f.id || "",
+        path: expanded,
+      });
+    }
+  }
+
+  let usage = null;
+  let usageError = "";
+  if (healthOk && items.length) {
+    try {
+      const body = { items: [] };
+      for (let j = 0; j < items.length; j++) {
+        body.items.push({ folder_id: items[j].folder_id, path: items[j].path });
+      }
+      const u = $http.send({
+        url: probeBase + "/v1/usage",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        timeout: 20,
+      });
+      if (u.statusCode === 200) {
+        try {
+          usage = JSON.parse(u.raw || "{}");
+        } catch (_) {
+          usageError = "invalid probe JSON";
+        }
+      } else {
+        usageError = "probe /v1/usage HTTP " + u.statusCode;
+      }
+    } catch (err) {
+      usageError = String(err);
+    }
+  } else if (!items.length) {
+    usageError = "geen mappen met uitvouwbare paden (Syncthing folders)";
+  }
+
+  return c.json(200, {
+    ok: healthOk && !usageError && usage !== null,
+    probeBase: probeBase,
+    healthOk: healthOk,
+    healthError: healthError,
+    folderCount: items.length,
+    folders: items,
+    usage: usage,
+    usageError: usageError,
+    instanceId: cred.instanceId,
+    instanceName: cred.name,
+  });
+}
+
 function testConnection(c) {
   const body = readJson(c);
   const baseUrl = normalizeBaseUrl(body.base_url);
@@ -1170,6 +1294,7 @@ function topology(c) {
 
 module.exports = {
   testConnection,
+  testDiskProbe,
   topology,
   backupConfig,
   restoreConfig,
