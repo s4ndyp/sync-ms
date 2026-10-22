@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/s4ndyp/sync-ms/internal/disk"
 	"github.com/s4ndyp/sync-ms/internal/pbstore"
@@ -10,7 +11,17 @@ import (
 	"github.com/s4ndyp/sync-ms/internal/syncthing"
 )
 
+const diskProbeInterval = time.Hour
+
 func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance, client *syncthing.Client, recorded string) {
+	c.mu.Lock()
+	hasData := c.diskProbeHasData[inst.ID]
+	lastProbe := c.lastDiskProbeAt[inst.ID]
+	c.mu.Unlock()
+	if hasData && !lastProbe.IsZero() && time.Since(lastProbe) < diskProbeInterval {
+		return
+	}
+
 	probeBase, err := probeclient.BaseURLForInstance(inst.BaseURL, inst.DiskProbeHost)
 	if err != nil {
 		return
@@ -61,6 +72,7 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 		log.Printf("collector: disk probe %s: %v", inst.Name, err)
 		return
 	}
+	var saved int
 	for _, row := range results {
 		if row.Error != "" {
 			log.Printf("collector: disk probe %s folder %s: %s", inst.Name, row.FolderID, row.Error)
@@ -80,6 +92,14 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 			"source":       "probe",
 		}); err != nil {
 			log.Printf("collector: folder disk %s/%s: %v", inst.Name, row.FolderID, err)
+			continue
 		}
+		saved++
+	}
+	if saved > 0 {
+		c.mu.Lock()
+		c.diskProbeHasData[inst.ID] = true
+		c.lastDiskProbeAt[inst.ID] = time.Now().UTC()
+		c.mu.Unlock()
 	}
 }

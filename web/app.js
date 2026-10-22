@@ -225,7 +225,7 @@ function recordSyncStatusChanges(topologyInstances) {
         fromStatus: prevStatus,
         toStatus: nextStatus,
       });
-      state.syncStatusLog[id] = state.syncStatusLog[id].slice(0, 5);
+      state.syncStatusLog[id] = state.syncStatusLog[id].slice(0, 10);
       state.syncStatusSnapshot[id] = nextStatus;
       refreshSyncLogPanel(id);
     }
@@ -283,7 +283,7 @@ function renderInstanceStatsPanel(inst) {
       <button type="button" class="btn ghost btn-compact" id="instance-stats-refresh">Vernieuw statistieken</button>
       <button type="button" class="btn ghost btn-compact" id="btn-sync-status-log" aria-expanded="false">Logging</button>
       <div id="sync-status-log-panel" class="sync-log-panel" hidden>
-        <p class="hint tiny">Laatste 5 sync-statuswijzigingen (Syncthing, via topology).</p>
+        <p class="hint tiny">Laatste 10 sync-statuswijzigingen (Syncthing, via topology).</p>
         <div id="sync-status-log-body">${buildSyncStatusLogHtml(inst.id)}</div>
       </div>
     </section>`;

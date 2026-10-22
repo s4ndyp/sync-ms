@@ -23,10 +23,12 @@ type Collector struct {
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 
-	mu      sync.Mutex
-	lastIn  map[string]int64
-	lastOut map[string]int64
-	lastAt  map[string]time.Time
+	mu               sync.Mutex
+	lastIn           map[string]int64
+	lastOut          map[string]int64
+	lastAt           map[string]time.Time
+	lastDiskProbeAt  map[string]time.Time
+	diskProbeHasData map[string]bool
 }
 
 func New(cfg Config) *Collector {
@@ -40,9 +42,11 @@ func New(cfg Config) *Collector {
 		cfg:     cfg,
 		store:   pbstore.New(cfg.PocketBaseURL),
 		stopCh:  make(chan struct{}),
-		lastIn:  make(map[string]int64),
-		lastOut: make(map[string]int64),
-		lastAt:  make(map[string]time.Time),
+		lastIn:           make(map[string]int64),
+		lastOut:          make(map[string]int64),
+		lastAt:           make(map[string]time.Time),
+		lastDiskProbeAt:  make(map[string]time.Time),
+		diskProbeHasData: make(map[string]bool),
 	}
 }
 
