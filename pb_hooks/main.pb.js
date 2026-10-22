@@ -33,6 +33,11 @@ routerAdd("GET", "/api/syncms/instances/{instanceId}/folders", (c) => {
   return api.instanceFolders(c);
 });
 
+routerAdd("POST", "/api/syncms/instances/{instanceId}/test-disk-probe", (c) => {
+  const api = require(`${__hooks}/syncms_api.js`);
+  return api.testDiskProbe(c);
+});
+
 routerAdd("POST", "/api/syncms/instances/{instanceId}/add-folder", (c) => {
   const api = require(`${__hooks}/syncms_api.js`);
   return api.applyAddFolder(c);

@@ -35,8 +35,10 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 		if f.ID == "" {
 			continue
 		}
-		resolved, err := disk.ResolveExistingPath(f.Path, home)
-		if err != nil {
+		// Paths exist on the Syncthing host only — expand ~ via API, do not stat locally.
+		expanded := disk.ExpandPath(f.Path, home)
+		if expanded == "" || expanded == "~" {
+			log.Printf("collector: disk probe %s: skip folder %s (path %q not expanded)", inst.Name, f.ID, f.Path)
 			continue
 		}
 		label := f.Label
@@ -46,10 +48,11 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 		query = append(query, probeclient.QueryItem{
 			FolderID:    f.ID,
 			FolderLabel: label,
-			Path:        resolved,
+			Path:        expanded,
 		})
 	}
 	if len(query) == 0 {
+		log.Printf("collector: disk probe %s: no folders to query (Syncthing folders empty or paths unusable)", inst.Name)
 		return
 	}
 
@@ -60,6 +63,7 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 	}
 	for _, row := range results {
 		if row.Error != "" {
+			log.Printf("collector: disk probe %s folder %s: %s", inst.Name, row.FolderID, row.Error)
 			continue
 		}
 		label := row.FolderLabel
