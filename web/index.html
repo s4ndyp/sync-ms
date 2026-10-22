@@ -88,22 +88,22 @@
       </section>
 
       <section class="panel">
-        <h2>Vrije schijfruimte per map</h2>
-        <p class="hint">
-          Op elke Syncthing-host: <code>curl -fsSL …/deploy/install-disk-probe.sh | sudo bash</code>
-          (prebuilt binary, poort <strong>8765</strong>, geen auth). Sync-MS haalt mappen via Syncthing API en vraagt
-          schijfruimte op bij de probe. Zelfde instance- en periode-filters als hierboven.
-        </p>
-        <div id="folder-disk-charts" class="folder-disk-charts"></div>
-        <p id="folder-disk-empty" class="hint" hidden>Geen schijfmetingen in deze periode.</p>
-      </section>
-
-      <section class="panel">
         <h2>Transfer speed (laatste 8 uur)</h2>
         <p class="hint small">480 metingen (1 per minuut); ontbrekende minuten = 0.</p>
         <div class="chart-wrap chart-wrap-tall">
           <canvas id="speed-chart" height="100"></canvas>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2>Vrije schijfruimte per map</h2>
+        <p class="hint">
+          Op elke Syncthing-host: <code>curl -fsSL …/deploy/install-disk-probe.sh | sudo bash</code>
+          (prebuilt binary, poort <strong>8765</strong>, geen auth). Sync-MS haalt mappen via Syncthing API en vraagt
+          schijfruimte op bij de probe. Zelfde instance- en periode-filters als bij Transferred bytes.
+        </p>
+        <div id="folder-disk-charts" class="folder-disk-charts"></div>
+        <p id="folder-disk-empty" class="hint" hidden>Geen schijfmetingen in deze periode.</p>
       </section>
     </main>
 
