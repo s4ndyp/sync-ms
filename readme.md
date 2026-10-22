@@ -82,7 +82,7 @@ Syncthing levert geen schijfstatistiek. Op **elke Syncthing-host** draait `syncm
 curl -fsSL https://raw.githubusercontent.com/s4ndyp/sync-ms/main/deploy/install-disk-probe.sh | sudo bash
 ```
 
-(Vereist `git` + `go` op de host, of kopieer een CI-built binary naar `/usr/local/bin/syncms-disk-probe`.)
+Het script downloadt een **prebuilt binary** van GitHub Releases (`disk-probe-latest`, linux amd64/arm64), gebouwd door CI bij push naar `main`/`beta`.
 
 Sync-MS **collector**: leest mappen via Syncthing REST, roept `POST http://<host>:8765/v1/usage` aan met uitgevouwen paden. Optioneel afwijkende probe-host per instance (`disk_probe_host` in het formulier).
 

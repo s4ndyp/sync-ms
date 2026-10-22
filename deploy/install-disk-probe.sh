@@ -3,33 +3,35 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/s4ndyp/sync-ms/main/deploy/install-disk-probe.sh | sudo bash
 set -euo pipefail
 
-REPO="${SYNC_MS_REPO:-https://github.com/s4ndyp/sync-ms.git}"
-REF="${SYNC_MS_REF:-main}"
+GITHUB_REPO="${SYNC_MS_GITHUB_REPO:-s4ndyp/sync-ms}"
+PROBE_TAG="${SYNC_MS_PROBE_TAG:-disk-probe-latest}"
 BIN="/usr/local/bin/syncms-disk-probe"
 SERVICE="/etc/systemd/system/syncms-disk-probe.service"
 
+log() { printf 'install-disk-probe: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
 if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Run as root (sudo)." >&2
-  exit 1
+  die "run as root (sudo)"
 fi
 
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
+case "$(uname -m)" in
+  x86_64 | amd64) GOARCH=amd64 ;;
+  aarch64 | arm64) GOARCH=arm64 ;;
+  *) die "unsupported CPU architecture: $(uname -m) (need amd64 or arm64)" ;;
+esac
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "Install git first." >&2
-  exit 1
-fi
-if ! command -v go >/dev/null 2>&1; then
-  echo "Install Go (1.22+) to build syncms-disk-probe, or copy a prebuilt binary to $BIN" >&2
-  exit 1
+ASSET="syncms-disk-probe-linux-${GOARCH}"
+BASE="https://github.com/${GITHUB_REPO}/releases/download/${PROBE_TAG}"
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+log "downloading ${BASE}/${ASSET}"
+if ! curl -fsSL "${BASE}/${ASSET}" -o "$TMP"; then
+  die "download failed — is release ${PROBE_TAG} published? (merge to main first)"
 fi
 
-git clone --depth 1 --branch "$REF" "$REPO" "$WORKDIR/src"
-(
-  cd "$WORKDIR/src"
-  CGO_ENABLED=0 go build -ldflags="-s -w" -o "$BIN" ./cmd/syncms-disk-probe
-)
+install -m 0755 "$TMP" "$BIN"
 
 cat >"$SERVICE" <<'UNIT'
 [Unit]
@@ -50,4 +52,5 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now syncms-disk-probe.service
 
-echo "syncms-disk-probe active on port 8765 (no auth). Test: curl -s http://127.0.0.1:8765/health"
+log "syncms-disk-probe active on port 8765 (no auth)"
+log "test: curl -s http://127.0.0.1:8765/health"
