@@ -28,6 +28,7 @@ jobs:
         run: |
           go vet ./...
           CGO_ENABLED=0 go build -o /dev/null ./cmd/collector
+          CGO_ENABLED=0 go build -o /dev/null ./cmd/syncms-disk-probe
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

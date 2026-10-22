@@ -872,6 +872,25 @@ code {
   min-height: 220px;
 }
 
+.folder-disk-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.folder-disk-chart-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text, #e8eaef);
+}
+
+.chart-wrap-disk {
+  min-height: 140px;
+  height: 140px;
+}
+
 .chart-wrap-tall {
   min-height: 260px;
 }

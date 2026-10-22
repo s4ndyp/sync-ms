@@ -53,7 +53,8 @@ type Instance struct {
 	OutSpeedBps     float64 `json:"out_speed_bps"`
 	Version         string `json:"version"`
 	SampleCount     int    `json:"sample_count"`
-	LastSampleAt    string `json:"last_sample_at"`
+	LastSampleAt  string `json:"last_sample_at"`
+	DiskProbeHost string `json:"disk_probe_host"`
 }
 
 func (s *Store) ListInstances(ctx context.Context) ([]Instance, error) {
@@ -129,6 +130,15 @@ func (s *Store) ListSamplesSince(ctx context.Context, instanceID string, since t
 func (s *Store) DeleteSamplesBefore(ctx context.Context, before time.Time) (int, error) {
 	filter := fmt.Sprintf(`recorded_at < "%s"`, formatPBTime(before))
 	return s.deleteByFilter(ctx, "transfer_samples", filter)
+}
+
+func (s *Store) CreateFolderDiskSample(ctx context.Context, sample map[string]any) error {
+	return s.createRecord(ctx, "folder_disk_samples", sample)
+}
+
+func (s *Store) DeleteFolderDiskSamplesBefore(ctx context.Context, before time.Time) (int, error) {
+	filter := fmt.Sprintf(`recorded_at < "%s"`, formatPBTime(before))
+	return s.deleteByFilter(ctx, "folder_disk_samples", filter)
 }
 
 func formatPBTime(t time.Time) string {

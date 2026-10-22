@@ -679,6 +679,7 @@ function backupConfig(c) {
       name: String(rec.get("name") || "").trim(),
       base_url: String(rec.get("base_url") || "").trim(),
       api_key: String(rec.get("api_key") || "").trim(),
+      disk_probe_host: String(rec.get("disk_probe_host") || "").trim(),
       enabled: rec.get("enabled") !== false,
     });
   }
@@ -719,6 +720,7 @@ function restoreConfig(c) {
     const baseUrl = normalizeBaseUrl(item.base_url);
     const apiKey = String(item.api_key || "").trim();
     const enabled = item.enabled !== false;
+    const diskProbeHost = String(item.disk_probe_host || "").trim();
 
     if (!name || !baseUrl || !apiKey) {
       skipped++;
@@ -730,6 +732,7 @@ function restoreConfig(c) {
     if (prev) {
       prev.set("base_url", baseUrl);
       prev.set("api_key", apiKey);
+      prev.set("disk_probe_host", diskProbeHost);
       prev.set("enabled", enabled);
       $app.save(prev);
       updated++;
@@ -738,6 +741,7 @@ function restoreConfig(c) {
       rec.set("name", name);
       rec.set("base_url", baseUrl);
       rec.set("api_key", apiKey);
+      rec.set("disk_probe_host", diskProbeHost);
       rec.set("enabled", enabled);
       rec.set("last_event_id", 0);
       rec.set("online", false);

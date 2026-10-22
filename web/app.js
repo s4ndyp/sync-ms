@@ -16,6 +16,8 @@ const state = {
   editingId: null,
   transferChart: null,
   speedChart: null,
+  /** @type {Chart[]} */
+  folderDiskCharts: [],
 };
 
 const TOPO_W = 1000;
@@ -1276,6 +1278,7 @@ function openDialog(inst) {
   form.name.value = inst?.name || "";
   form.base_url.value = inst?.base_url || "";
   form.api_key.value = inst?.api_key || "";
+  form.disk_probe_host.value = inst?.disk_probe_host || "";
   form.enabled.checked = inst ? inst.enabled !== false : true;
   setTestConnectionStatus("", "");
   dialog.showModal();
@@ -1287,6 +1290,7 @@ form.addEventListener("submit", async (e) => {
     name: form.name.value.trim(),
     base_url: form.base_url.value.trim(),
     api_key: form.api_key.value.trim(),
+    disk_probe_host: form.disk_probe_host.value.trim(),
     enabled: form.enabled.checked,
   };
   if (state.editingId) {
@@ -1438,6 +1442,150 @@ function filterSamplesByInstance(rows) {
   return rows.filter((r) => r.instance === state.chartInstance);
 }
 
+function instanceNameById(id) {
+  const inst = state.instances.find((i) => i.id === id);
+  return inst ? inst.name : id;
+}
+
+function downsampleDiskRows(rows, range) {
+  if (range === "8h" || range === "24h") return rows;
+  const byHour = new Map();
+  for (const row of rows) {
+    const dt = parsePbDate(row.recorded_at);
+    if (!dt) continue;
+    const key = dt.toISOString().slice(0, 13);
+    byHour.set(key, row);
+  }
+  return [...byHour.values()].sort(
+    (a, b) => (parsePbDate(a.recorded_at)?.getTime() || 0) - (parsePbDate(b.recorded_at)?.getTime() || 0)
+  );
+}
+
+function diskChartLabel(dt, range) {
+  if (!dt) return "";
+  if (range === "month" || range === "all" || range === "7d") {
+    return dt.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function destroyFolderDiskCharts() {
+  for (const ch of state.folderDiskCharts) {
+    try {
+      ch.destroy();
+    } catch (_) {}
+  }
+  state.folderDiskCharts = [];
+}
+
+function renderFolderDiskCharts(groups, range) {
+  const host = document.getElementById("folder-disk-charts");
+  const emptyEl = document.getElementById("folder-disk-empty");
+  destroyFolderDiskCharts();
+  host.innerHTML = "";
+
+  const keys = [...groups.keys()].sort();
+  if (!keys.length) {
+    emptyEl.hidden = false;
+    return;
+  }
+  emptyEl.hidden = true;
+
+  const c = chartColors();
+  const showInstance = !state.chartInstance;
+
+  for (const key of keys) {
+    const meta = groups.get(key);
+    const rows = downsampleDiskRows(meta.rows, range);
+    const labels = rows.map((r) => diskChartLabel(parsePbDate(r.recorded_at), range));
+    const freeData = rows.map((r) => Number(r.free_bytes) || 0);
+
+    const wrap = document.createElement("div");
+    wrap.className = "folder-disk-chart-item";
+    const title = document.createElement("h3");
+    title.className = "folder-disk-chart-title";
+    title.textContent = showInstance
+      ? `${meta.instanceName} · ${meta.folderLabel}`
+      : meta.folderLabel;
+    const chartWrap = document.createElement("div");
+    chartWrap.className = "chart-wrap chart-wrap-disk";
+    const canvas = document.createElement("canvas");
+    canvas.height = 100;
+    chartWrap.appendChild(canvas);
+    wrap.appendChild(title);
+    wrap.appendChild(chartWrap);
+    host.appendChild(wrap);
+
+    const chart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Vrije ruimte",
+            data: freeData,
+            borderColor: "rgba(255, 180, 84, 0.9)",
+            backgroundColor: "rgba(255, 180, 84, 0.15)",
+            fill: true,
+            tension: 0.2,
+            pointRadius: labels.length > 120 ? 0 : 2,
+            pointHoverRadius: 4,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: c.text, maxRotation: 45, maxTicksLimit: 12 }, grid: { color: c.grid } },
+          y: {
+            ticks: { color: c.text, callback: (v) => formatBytes(v) },
+            grid: { color: c.grid },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: c.text } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `Vrij: ${formatBytes(ctx.raw)}`,
+            },
+          },
+        },
+      },
+    });
+    state.folderDiskCharts.push(chart);
+  }
+}
+
+async function loadFolderDiskCharts() {
+  const from = rangeStart(state.range);
+  const filter =
+    from.getTime() > 0 ? `recorded_at >= "${toPbFilterDate(from)}"` : "";
+  const rows = await listAll("folder_disk_samples", { filter, sort: "recorded_at" });
+  const filtered = filterSamplesByInstance(rows);
+
+  const groups = new Map();
+  for (const row of filtered) {
+    const folderId = String(row.folder_id || "").trim();
+    if (!folderId) continue;
+    const instId = row.instance;
+    const key = `${instId}\0${folderId}`;
+    const label = String(row.folder_label || "").trim() || folderId;
+    let g = groups.get(key);
+    if (!g) {
+      g = { instanceName: instanceNameById(instId), folderLabel: label, rows: [] };
+      groups.set(key, g);
+    }
+    if (label && g.folderLabel === folderId && label !== folderId) {
+      g.folderLabel = label;
+    }
+    g.rows.push(row);
+  }
+
+  renderFolderDiskCharts(groups, state.range);
+}
+
 async function loadTransferChartFromRows(rows, useHourly) {
   const data = aggregateChartData(filterSamplesByInstance(rows), useHourly, state.range);
   renderTransferChart(data);
@@ -1456,6 +1604,7 @@ async function loadCharts() {
     const filter = `recorded_at >= "${toPbFilterDate(from8h)}"`;
     const speedRows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
     await loadSpeedChart8hFromRows(speedRows);
+    await loadFolderDiskCharts().catch((err) => console.error("folder disk charts", err));
     return;
   }
 
@@ -1469,6 +1618,7 @@ async function loadCharts() {
   await Promise.all([
     loadTransferChartFromRows(rows, false),
     loadSpeedChart8hFromRows(rows),
+    loadFolderDiskCharts().catch((err) => console.error("folder disk charts", err)),
   ]);
 }
 
