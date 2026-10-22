@@ -6,6 +6,10 @@ const state = {
   foldersByInstance: {},
   instanceTransferStats: {},
   syncByInstanceId: {},
+  /** @type {Record<string, string>} last syncStatus per instance (geen % — alleen echte statuswissels loggen) */
+  syncStatusSnapshot: {},
+  /** @type {Record<string, Array<{ at: string, fromLabel: string, toLabel: string, fromStatus: string, toStatus: string }>>} */
+  syncStatusLog: {},
   selectedInstanceId: null,
   range: "24h",
   chartInstance: "",
@@ -114,6 +118,12 @@ function instanceTransferFilter(instanceId, from, useHourly) {
 }
 
 async function loadInstanceTransferStats(instanceId) {
+  const inst = state.instances.find((i) => i.id === instanceId);
+  const alltime = {
+    inBytes: inst ? bytesAlltimeIn(inst) : 0,
+    outBytes: inst ? bytesAlltimeOut(inst) : 0,
+  };
+
   const from24 = rangeStart("24h");
   const from7 = rangeStart("7d");
   const from31 = rangeStart("31d");
@@ -137,6 +147,7 @@ async function loadInstanceTransferStats(instanceId) {
     h24: sumTransferRows(rows24),
     d7: sumTransferRows(rows7),
     d31: sumTransferRows(rows31),
+    alltime,
   };
 }
 
@@ -149,9 +160,74 @@ function renderInstanceStatsBody(stats) {
       ${row("24 uur", stats.h24)}
       ${row("7 dagen", stats.d7)}
       ${row("31 dagen", stats.d31)}
+      ${row("All-time", stats.alltime)}
     </tbody>
   </table>
-  <p class="hint tiny stats-footnote">Som van deltas · 31 dagen via uuraggregatie</p>`;
+  <p class="hint tiny stats-footnote">24u/7d/31d = som deltas · All-time = collector totaal · 31d via uuraggregatie</p>`;
+}
+
+function buildSyncStatusLogHtml(instanceId) {
+  const entries = state.syncStatusLog[instanceId] || [];
+  if (!entries.length) {
+    return `<p class="hint tiny sync-log-empty">Nog geen sync-statuswijzigingen gelogd (wijzigingen verschijnen na topology-refresh).</p>`;
+  }
+  return `<ul class="sync-log-list">${entries
+    .map((e) => {
+      const when = new Date(e.at);
+      const timeStr = Number.isNaN(when.getTime()) ? e.at : when.toLocaleString();
+      return `<li><time datetime="${escapeAttr(e.at)}">${escapeHtml(timeStr)}</time> <span class="sync-log-change">${escapeHtml(e.fromLabel)} → ${escapeHtml(e.toLabel)}</span></li>`;
+    })
+    .join("")}</ul>`;
+}
+
+function refreshSyncLogPanel(instanceId) {
+  const body = document.getElementById("sync-status-log-body");
+  if (!body || state.selectedInstanceId !== instanceId) return;
+  body.innerHTML = buildSyncStatusLogHtml(instanceId);
+}
+
+function syncStatusLogLabel(syncStatus, progressPercent) {
+  switch (syncStatus) {
+    case "syncing":
+      if (progressPercent != null && !Number.isNaN(Number(progressPercent))) {
+        return `Syncen (${Number(progressPercent)}%)`;
+      }
+      return "Syncen";
+    case "scanning":
+      return "Scannen";
+    case "uptodate":
+      return "Bijgewerkt";
+    case "standby":
+      return "Standby";
+    default:
+      return "—";
+  }
+}
+
+function recordSyncStatusChanges(topologyInstances) {
+  for (const ti of topologyInstances || []) {
+    const id = ti.instanceId;
+    if (!id) continue;
+    const nextStatus = ti.syncStatus || "unknown";
+    const prevStatus = state.syncStatusSnapshot[id];
+    if (prevStatus === undefined) {
+      state.syncStatusSnapshot[id] = nextStatus;
+      continue;
+    }
+    if (prevStatus !== nextStatus) {
+      if (!state.syncStatusLog[id]) state.syncStatusLog[id] = [];
+      state.syncStatusLog[id].unshift({
+        at: new Date().toISOString(),
+        fromLabel: syncStatusLogLabel(prevStatus, null),
+        toLabel: syncStatusLogLabel(nextStatus, ti.progressPercent),
+        fromStatus: prevStatus,
+        toStatus: nextStatus,
+      });
+      state.syncStatusLog[id] = state.syncStatusLog[id].slice(0, 5);
+      state.syncStatusSnapshot[id] = nextStatus;
+      refreshSyncLogPanel(id);
+    }
+  }
 }
 
 function buildFolderListHtml(folders) {
@@ -203,6 +279,11 @@ function renderInstanceStatsPanel(inst) {
       <h4 class="detail-subhead compact">Transfer</h4>
       <div id="instance-stats-body"><p class="hint small">Laden…</p></div>
       <button type="button" class="btn ghost btn-compact" id="instance-stats-refresh">Vernieuw statistieken</button>
+      <button type="button" class="btn ghost btn-compact" id="btn-sync-status-log" aria-expanded="false">Logging</button>
+      <div id="sync-status-log-panel" class="sync-log-panel" hidden>
+        <p class="hint tiny">Laatste 5 sync-statuswijzigingen (Syncthing, via topology).</p>
+        <div id="sync-status-log-body">${buildSyncStatusLogHtml(inst.id)}</div>
+      </div>
     </section>`;
 
   document.getElementById("detail-btn-refresh-folders")?.addEventListener("click", async () => {
@@ -220,6 +301,16 @@ function renderInstanceStatsPanel(inst) {
   document.getElementById("instance-stats-refresh")?.addEventListener("click", () => {
     delete state.instanceTransferStats[inst.id];
     loadAndShowInstanceStats(inst, true);
+  });
+
+  document.getElementById("btn-sync-status-log")?.addEventListener("click", () => {
+    const panel = document.getElementById("sync-status-log-panel");
+    const btn = document.getElementById("btn-sync-status-log");
+    if (!panel || !btn) return;
+    const open = panel.hidden;
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) refreshSyncLogPanel(inst.id);
   });
 
   if (!state.foldersByInstance[inst.id]?.length) {
@@ -907,6 +998,39 @@ function renderInstanceDetail() {
   });
 }
 
+/** Houd vorige topology-lijnen zichtbaar terwijl nieuwe data laadt. */
+function updateOverviewWhileTopologyLoading() {
+  const split = document.getElementById("overview-split");
+  const empty = document.getElementById("topology-empty");
+
+  if (!state.instances.length) {
+    split.hidden = true;
+    empty.hidden = false;
+    empty.textContent = "Nog geen instances. Voeg Syncthing-installaties toe (URL + API key).";
+    state.selectedInstanceId = null;
+    return;
+  }
+
+  split.hidden = false;
+  empty.hidden = true;
+
+  const ids = state.instances.map((i) => i.id);
+  state.nodeLayout = layoutTopologyNodes(ids);
+
+  if (!state.selectedInstanceId || !ids.includes(state.selectedInstanceId)) {
+    state.selectedInstanceId = state.instances[0].id;
+  }
+
+  renderTopologyNodes(state.instances, state.nodeLayout);
+  const links = state.topology?.links || [];
+  if (links.length) {
+    requestAnimationFrame(() => {
+      renderTopologyEdges(links, state.nodeLayout);
+    });
+  }
+  renderInstanceDetail();
+}
+
 async function loadTopology() {
   try {
     return await pbRequest("/api/syncms/topology");
@@ -944,6 +1068,8 @@ function renderOverview(topology) {
   const ids = state.instances.map((i) => i.id);
   state.nodeLayout = layoutTopologyNodes(ids);
   state.topology = topology || { links: [] };
+
+  recordSyncStatusChanges(topology.instances || []);
 
   state.topoErrors = {};
   state.foldersByInstance = {};
@@ -1350,13 +1476,8 @@ async function refresh() {
   setFooterStatus("Instances laden…");
   try {
     state.instances = await listAll("instances", { sort: "name" });
-    state.instanceTransferStats = {};
     syncInstanceSelect();
-    renderOverview({
-      links: [],
-      instances: [],
-      diagnostics: { hints: ["Topologie laden…"] },
-    });
+    updateOverviewWhileTopologyLoading();
 
     const chartsPromise = loadCharts().catch((err) => {
       console.error("charts", err);

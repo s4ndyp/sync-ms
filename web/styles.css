@@ -330,6 +330,38 @@ code {
   font-size: 0.68rem;
 }
 
+.sync-log-panel {
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.sync-log-list {
+  margin: 0.35rem 0 0;
+  padding: 0 0 0 1rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.sync-log-list li {
+  margin-bottom: 0.25rem;
+}
+
+.sync-log-list time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-log-change {
+  word-break: break-word;
+}
+
+.sync-log-empty {
+  margin: 0.25rem 0 0;
+}
+
 .detail-head {
   display: flex;
   align-items: flex-start;
