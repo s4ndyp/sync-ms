@@ -16,7 +16,6 @@ const state = {
 
 const TOPO_W = 1000;
 const TOPO_H = 560;
-const TOPO_NODE_PAD = 46;
 
 async function pbRequest(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -531,17 +530,42 @@ function layoutTopologyNodes(instanceIds) {
   return layout;
 }
 
-function trimSegment(x1, y1, x2, y2, pad) {
+function ellipseRadiusInDirection(rx, ry, ux, uy) {
+  const denom = Math.sqrt((ry * ux) ** 2 + (rx * uy) ** 2);
+  if (denom < 1e-6) return Math.max(rx, ry);
+  return (rx * ry) / denom;
+}
+
+/** Chip half-size in SVG viewBox units (measured from DOM after layout). */
+function getChipRadii(instanceId) {
+  const fallback = { rx: 62, ry: 40 };
+  const board = document.getElementById("topology-board");
+  const chip = document.querySelector(`.topo-chip[data-id="${CSS.escape(instanceId)}"]`);
+  if (!board || !chip) return fallback;
+  const br = board.getBoundingClientRect();
+  const cr = chip.getBoundingClientRect();
+  if (br.width < 1 || br.height < 1) return fallback;
+  return {
+    rx: Math.max(26, (cr.width / br.width) * TOPO_W * 0.5 + 1),
+    ry: Math.max(22, (cr.height / br.height) * TOPO_H * 0.5 + 1),
+  };
+}
+
+function trimSegmentToChips(x1, y1, x2, y2, fromId, toId) {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
+  const fromR = getChipRadii(fromId);
+  const toR = getChipRadii(toId);
+  const pad1 = ellipseRadiusInDirection(fromR.rx, fromR.ry, ux, uy);
+  const pad2 = ellipseRadiusInDirection(toR.rx, toR.ry, -ux, -uy);
   return {
-    x1: x1 + ux * pad,
-    y1: y1 + uy * pad,
-    x2: x2 - ux * pad,
-    y2: y2 - uy * pad,
+    x1: x1 + ux * pad1,
+    y1: y1 + uy * pad1,
+    x2: x2 - ux * pad2,
+    y2: y2 - uy * pad2,
   };
 }
 
@@ -571,8 +595,11 @@ function renderTopologyEdges(links, layout) {
   const pairCount = {};
   const defs = `
     <defs>
-      <marker id="sync-arrow-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-        <path d="M 0 1 L 10 5 L 0 9 Z" fill="context-stroke"></path>
+      <marker id="sync-arrow-end" viewBox="0 0 10 10" refX="9.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="context-stroke"></path>
+      </marker>
+      <marker id="sync-arrow-start" viewBox="0 0 10 10" refX="9.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="context-stroke"></path>
       </marker>
     </defs>`;
 
@@ -607,19 +634,19 @@ function renderTopologyEdges(links, layout) {
     let ey = to.y;
 
     if (link.aToB && !link.bToA) {
-      const seg = trimSegment(from.x, from.y, to.x, to.y, TOPO_NODE_PAD);
+      const seg = trimSegmentToChips(from.x, from.y, to.x, to.y, link.from, link.to);
       sx = seg.x1;
       sy = seg.y1;
       ex = seg.x2;
       ey = seg.y2;
     } else if (link.bToA && !link.aToB) {
-      const seg = trimSegment(to.x, to.y, from.x, from.y, TOPO_NODE_PAD);
+      const seg = trimSegmentToChips(to.x, to.y, from.x, from.y, link.to, link.from);
       sx = seg.x1;
       sy = seg.y1;
       ex = seg.x2;
       ey = seg.y2;
     } else {
-      const seg = trimSegment(from.x, from.y, to.x, to.y, TOPO_NODE_PAD);
+      const seg = trimSegmentToChips(from.x, from.y, to.x, to.y, link.from, link.to);
       sx = seg.x1;
       sy = seg.y1;
       ex = seg.x2;
@@ -636,12 +663,12 @@ function renderTopologyEdges(links, layout) {
     const color = folderLinkColor(link);
 
     const markers = link.bidirectional
-      ? 'marker-start="url(#sync-arrow-head)" marker-end="url(#sync-arrow-head)"'
-      : 'marker-end="url(#sync-arrow-head)"';
+      ? 'marker-start="url(#sync-arrow-start)" marker-end="url(#sync-arrow-end)"'
+      : 'marker-end="url(#sync-arrow-end)"';
 
     const dash = link.kind === "connection" ? ' stroke-dasharray="8 6" opacity="0.75"' : "";
     paths.push(
-      `<path d="M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}" stroke="${color}" ${markers}${dash}></path>`
+      `<path d="M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}" stroke="${color}" stroke-width="2.5" stroke-linecap="round" ${markers}${dash}></path>`
     );
 
     const mid = quadMid(sx, sy, cx, cy, ex, ey);
@@ -939,7 +966,9 @@ function renderOverview(topology) {
   }
 
   renderTopologyNodes(state.instances, state.nodeLayout);
-  renderTopologyEdges(state.topology.links || [], state.nodeLayout);
+  requestAnimationFrame(() => {
+    renderTopologyEdges(state.topology.links || [], state.nodeLayout);
+  });
   renderInstanceDetail();
 
   const diagEl = document.getElementById("topology-diag");
@@ -1352,6 +1381,8 @@ setInterval(refresh, 60_000);
 
 window.addEventListener("resize", () => {
   if (state.instances.length && state.nodeLayout) {
-    renderTopologyEdges(state.topology.links || [], state.nodeLayout);
+    requestAnimationFrame(() => {
+      renderTopologyEdges(state.topology.links || [], state.nodeLayout);
+    });
   }
 });
