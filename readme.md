@@ -70,4 +70,20 @@ Browser → PocketBase (8090) → pb_public UI + API
          syncms-collector → Syncthing REST (events + connections)
 ```
 
-Data: `instances`, `transfer_samples`, `transfer_hourly`.
+Data: `instances`, `transfer_samples`, `transfer_hourly`, `folder_disk_samples`.
+
+### Vrije schijfruimte (disk probe)
+
+Syncthing levert geen schijfstatistiek. Op **elke Syncthing-host** draait `syncms-disk-probe` (poort **8765**, geen auth): alleen `df` op paden die Sync-MS meestuurt.
+
+**Eén commando op de Syncthing LXC:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/s4ndyp/sync-ms/main/deploy/install-disk-probe.sh | sudo bash
+```
+
+(Vereist `git` + `go` op de host, of kopieer een CI-built binary naar `/usr/local/bin/syncms-disk-probe`.)
+
+Sync-MS **collector**: leest mappen via Syncthing REST, roept `POST http://<host>:8765/v1/usage` aan met uitgevouwen paden. Optioneel afwijkende probe-host per instance (`disk_probe_host` in het formulier).
+
+Dashboard: grafiek per map, zelfde filters als “Transferred bytes”.

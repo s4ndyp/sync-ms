@@ -283,6 +283,8 @@ func (c *Collector) takeSample(ctx context.Context, inst pbstore.Instance, clien
 	if inDelta > 0 || outDelta > 0 {
 		c.rollupHour(ctx, inst.ID, now, inDelta, outDelta)
 	}
+
+	c.sampleFolderDisk(ctx, inst, client, recorded)
 }
 
 func (c *Collector) rollupHour(ctx context.Context, instanceID string, at time.Time, inDelta, outDelta int64) {
@@ -333,7 +335,13 @@ func (c *Collector) retentionLoop() {
 			if err != nil {
 				log.Printf("collector: retention: %v", err)
 			} else if n > 0 {
-				log.Printf("collector: removed %d old samples", n)
+				log.Printf("collector: removed %d old transfer samples", n)
+			}
+			n2, err := c.store.DeleteFolderDiskSamplesBefore(context.Background(), before)
+			if err != nil {
+				log.Printf("collector: folder disk retention: %v", err)
+			} else if n2 > 0 {
+				log.Printf("collector: removed %d old folder disk samples", n2)
 			}
 		}
 	}
