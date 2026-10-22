@@ -5,6 +5,7 @@ const state = {
   topoErrors: {},
   foldersByInstance: {},
   instanceTransferStats: {},
+  syncByInstanceId: {},
   selectedInstanceId: null,
   range: "24h",
   chartInstance: "",
@@ -661,6 +662,21 @@ function selectInstance(instanceId) {
   renderInstanceDetail();
 }
 
+function syncBadgeClass(syncStatus) {
+  switch (syncStatus) {
+    case "syncing":
+      return "sync-active";
+    case "scanning":
+      return "sync-scan";
+    case "uptodate":
+      return "sync-ok";
+    case "standby":
+      return "sync-standby";
+    default:
+      return "sync-unknown";
+  }
+}
+
 function renderTopologyNodes(instances, layout) {
   const root = document.getElementById("topology-nodes");
   root.innerHTML = instances
@@ -671,6 +687,15 @@ function renderTopologyNodes(instances, layout) {
       const selected = inst.id === state.selectedInstanceId;
       const left = (pos.x / TOPO_W) * 100;
       const top = (pos.y / TOPO_H) * 100;
+      const sync = state.syncByInstanceId[inst.id] || {};
+      const syncLabel = sync.syncLabel || "—";
+      const syncStatus = sync.syncStatus || "unknown";
+      const syncTitle = online ? syncLabel : "Offline";
+      const title = `${inst.name} — ${syncTitle}`;
+      const syncBadge =
+        online && syncLabel
+          ? `<span class="badge sync ${syncBadgeClass(syncStatus)}">${escapeHtml(syncLabel)}</span>`
+          : "";
       return `
       <button
         type="button"
@@ -678,10 +703,13 @@ function renderTopologyNodes(instances, layout) {
         data-id="${inst.id}"
         style="left:${left}%;top:${top}%"
         aria-pressed="${selected ? "true" : "false"}"
-        title="${escapeHtml(inst.name)}"
+        title="${escapeHtml(title)}"
       >
         <span class="topo-chip-name">${escapeHtml(inst.name)}</span>
-        <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
+        <span class="topo-chip-badges">
+          <span class="badge ${online ? "ok" : "off"}">${online ? "Online" : "Offline"}</span>
+          ${syncBadge}
+        </span>
       </button>`;
     })
     .join("");
@@ -892,9 +920,15 @@ function renderOverview(topology) {
 
   state.topoErrors = {};
   state.foldersByInstance = {};
+  state.syncByInstanceId = {};
   for (const ti of topology.instances || []) {
     if (ti.error) state.topoErrors[ti.instanceId] = ti.error;
     state.foldersByInstance[ti.instanceId] = ti.folders || [];
+    state.syncByInstanceId[ti.instanceId] = {
+      syncStatus: ti.syncStatus || "unknown",
+      syncLabel: ti.syncLabel || "—",
+      progressPercent: ti.progressPercent,
+    };
   }
   if (topology.diagnostics?.hookError) {
     state.topoErrors.__hook = topology.diagnostics.hookError;

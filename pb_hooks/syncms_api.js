@@ -163,6 +163,84 @@ function folderTypeLabel(type) {
   return "Verzenden en ontvangen";
 }
 
+function parseDbStatus(raw) {
+  try {
+    return JSON.parse(raw || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+function roundCompletionPercent(completion) {
+  const n = Number(completion);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+/** Local sync summary via /rest/db/completion + per-folder /rest/db/status (Syncthing REST). */
+function summarizeInstanceSync(baseUrl, apiKey, folderIds) {
+  const summary = {
+    syncStatus: "standby",
+    syncLabel: "Standby",
+    progressPercent: null,
+  };
+
+  if (!folderIds || !folderIds.length) {
+    return summary;
+  }
+
+  let completionPct = null;
+  let needBytes = 0;
+  const compRes = stRequest(baseUrl, apiKey, "/rest/db/completion");
+  if (compRes.statusCode === 200) {
+    const comp = parseDbStatus(compRes.raw);
+    completionPct = roundCompletionPercent(comp.completion);
+    needBytes = Number(comp.needBytes) || 0;
+  }
+
+  let syncing = false;
+  let scanning = false;
+  for (let i = 0; i < folderIds.length; i++) {
+    const folderId = folderIds[i];
+    if (!folderId) continue;
+    const enc = encodeURIComponent(folderId);
+    const stRes = stRequest(baseUrl, apiKey, "/rest/db/status?folder=" + enc);
+    if (stRes.statusCode !== 200) continue;
+    const db = parseDbStatus(stRes.raw);
+    const state = String(db.state || "idle").toLowerCase();
+    if (state === "syncing" || state === "sync-preparing") syncing = true;
+    else if (state === "scanning" || state === "cleaning") scanning = true;
+    const folderNeed = Number(db.needBytes) || 0;
+    if (folderNeed > needBytes) needBytes = folderNeed;
+  }
+
+  if (syncing) {
+    summary.syncStatus = "syncing";
+    summary.progressPercent = completionPct;
+    summary.syncLabel =
+      completionPct != null ? "Syncen " + completionPct + "%" : "Syncen";
+    return summary;
+  }
+
+  if (scanning) {
+    summary.syncStatus = "scanning";
+    summary.syncLabel = "Scannen";
+    return summary;
+  }
+
+  if (needBytes === 0) {
+    summary.syncStatus = "uptodate";
+    summary.syncLabel = "Bijgewerkt";
+    summary.progressPercent = completionPct != null ? completionPct : 100;
+    return summary;
+  }
+
+  summary.syncStatus = "standby";
+  summary.syncLabel = "Standby";
+  summary.progressPercent = completionPct;
+  return summary;
+}
+
 function enrichFolderSharedWith(folder, deviceNames, byDevice) {
   const sharedWith = [];
   const devices = folder.devices || [];
@@ -370,8 +448,23 @@ function buildTopologyResponse(c) {
           entry.connectedPeers = parseConnectedPeers(connRes.raw, syncthingId);
         }
       }
+
+      const folderIds = [];
+      for (let fi = 0; fi < entry.folders.length; fi++) {
+        if (entry.folders[fi].id) folderIds.push(entry.folders[fi].id);
+      }
+      const sync = summarizeInstanceSync(baseUrl, apiKey, folderIds);
+      entry.syncStatus = sync.syncStatus;
+      entry.syncLabel = sync.syncLabel;
+      entry.progressPercent = sync.progressPercent;
     } catch (err) {
       entry.error = String(err);
+    }
+
+    if (!entry.syncStatus) {
+      entry.syncStatus = "unknown";
+      entry.syncLabel = "—";
+      entry.progressPercent = null;
     }
 
     entry.syncthingId = syncthingId;
@@ -552,6 +645,9 @@ function buildTopologyResponse(c) {
       folderCount: m.folders.length,
       connectedPeerCount: m.connectedPeers.length,
       error: m.error,
+      syncStatus: m.syncStatus || "unknown",
+      syncLabel: m.syncLabel || "—",
+      progressPercent: m.progressPercent,
       folders: m.folders.map((f) => ({
         id: f.id,
         label: f.label,
