@@ -98,8 +98,8 @@
       <section class="panel">
         <h2>Vrije schijfruimte per map</h2>
         <p class="hint">
-          Op elke Syncthing-host: <code>curl -fsSL …/deploy/install-disk-probe.sh | sudo bash</code>
-          (prebuilt binary, poort <strong>8765</strong>, geen auth). Sync-MS haalt mappen via Syncthing API en vraagt
+          Docker: <code>ghcr.io/s4ndyp/sync-ms:disk-probe</code> (zelfde mappen-volumes als Syncthing) of
+          <code>install-disk-probe.sh</code> op een VM. Poort <strong>8765</strong>, geen auth. Sync-MS haalt mappen via Syncthing API en vraagt
           schijfruimte op bij de probe. Zelfde instance- en periode-filters als bij Transferred bytes.
         </p>
         <div id="folder-disk-charts" class="folder-disk-charts"></div>

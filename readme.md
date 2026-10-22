@@ -76,13 +76,21 @@ Data: `instances`, `transfer_samples`, `transfer_hourly`, `folder_disk_samples`.
 
 Syncthing levert geen schijfstatistiek. Op **elke Syncthing-host** draait `syncms-disk-probe` (poort **8765**, geen auth): alleen `df` op paden die Sync-MS meestuurt.
 
-**Eén commando op de Syncthing LXC:**
+**Docker (Unraid / linuxserver sidecar, aanbevolen):**
+
+```text
+ghcr.io/s4ndyp/sync-ms:disk-probe
+```
+
+Zelfde volume-paden als Syncthing-mappen; poort `8765`. Zie [deploy/unraid-linuxserver-syncthing.md](deploy/unraid-linuxserver-syncthing.md).
+
+**VM/LXC (systemd):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/s4ndyp/sync-ms/main/deploy/install-disk-probe.sh | sudo bash
 ```
 
-Het script downloadt een **prebuilt binary** van GitHub Releases (`disk-probe-latest`, linux amd64/arm64), gebouwd door CI bij push naar `main`/`beta`.
+Of prebuilt binary van GitHub Releases (`disk-probe-latest`, linux amd64/arm64).
 
 Sync-MS **collector**: leest mappen via Syncthing REST, roept `POST http://<host>:8765/v1/usage` aan met uitgevouwen paden. Optioneel afwijkende probe-host per instance (`disk_probe_host` in het formulier).
 
