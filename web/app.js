@@ -1540,6 +1540,7 @@ function renderFolderDiskCharts(groups, range) {
         scales: {
           x: { ticks: { color: c.text, maxRotation: 45, maxTicksLimit: 12 }, grid: { color: c.grid } },
           y: {
+            min: 0,
             ticks: { color: c.text, callback: (v) => formatBytes(v) },
             grid: { color: c.grid },
           },
