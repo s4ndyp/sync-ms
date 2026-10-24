@@ -141,6 +141,48 @@ func (s *Store) DeleteFolderDiskSamplesBefore(ctx context.Context, before time.T
 	return s.deleteByFilter(ctx, "folder_disk_samples", filter)
 }
 
+func (s *Store) DeleteFolderDiskSamplesExcept(ctx context.Context, instanceID string, keepFolderIDs []string) (int, error) {
+	keep := make(map[string]struct{}, len(keepFolderIDs))
+	for _, id := range keepFolderIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			keep[id] = struct{}{}
+		}
+	}
+	filter := fmt.Sprintf(`instance="%s"`, instanceID)
+	type folderDiskRef struct {
+		ID       string `json:"id"`
+		FolderID string `json:"folder_id"`
+	}
+	rows, err := listAll[folderDiskRef](ctx, s, "folder_disk_samples", url.Values{
+		"filter": {filter},
+		"fields": {"id,folder_id"},
+	})
+	if err != nil {
+		return 0, err
+	}
+	var removed int
+	for _, row := range rows {
+		if _, ok := keep[row.FolderID]; ok {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.BaseURL+"/api/collections/folder_disk_samples/records/"+row.ID, nil)
+		if err != nil {
+			return removed, err
+		}
+		res, err := s.HTTP.Do(req)
+		if err != nil {
+			return removed, err
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
+			return removed, fmt.Errorf("DELETE folder_disk_samples/%s: %s", row.ID, res.Status)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 func formatPBTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.000Z")
 }

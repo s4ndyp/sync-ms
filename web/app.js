@@ -1558,6 +1558,14 @@ function renderFolderDiskCharts(groups, range) {
   }
 }
 
+function isFolderActiveInTopology(instanceId, folderId) {
+  if (!Object.prototype.hasOwnProperty.call(state.foldersByInstance, instanceId)) {
+    return true;
+  }
+  const folders = state.foldersByInstance[instanceId] || [];
+  return folders.some((f) => String(f.id || "").trim() === folderId);
+}
+
 async function loadFolderDiskCharts() {
   const from = rangeStart(state.range);
   const filter =
@@ -1570,6 +1578,7 @@ async function loadFolderDiskCharts() {
     const folderId = String(row.folder_id || "").trim();
     if (!folderId) continue;
     const instId = row.instance;
+    if (!isFolderActiveInTopology(instId, folderId)) continue;
     const key = `${instId}\0${folderId}`;
     const label = String(row.folder_label || "").trim() || folderId;
     let g = groups.get(key);
@@ -1615,11 +1624,8 @@ async function loadCharts() {
   const filter =
     earliest.getTime() > 0 ? `recorded_at >= "${toPbFilterDate(earliest)}"` : "";
   const rows = await listAll("transfer_samples", { filter, sort: "recorded_at" });
-  await Promise.all([
-    loadTransferChartFromRows(rows, false),
-    loadSpeedChart8hFromRows(rows),
-    loadFolderDiskCharts().catch((err) => console.error("folder disk charts", err)),
-  ]);
+  await Promise.all([loadTransferChartFromRows(rows, false), loadSpeedChart8hFromRows(rows)]);
+  await loadFolderDiskCharts().catch((err) => console.error("folder disk charts", err));
 }
 
 async function refresh() {
@@ -1629,18 +1635,18 @@ async function refresh() {
     syncInstanceSelect();
     updateOverviewWhileTopologyLoading();
 
-    const chartsPromise = loadCharts().catch((err) => {
-      console.error("charts", err);
-      setFooterStatus(`Grafieken: ${err.message}`);
-    });
-
     setFooterStatus("Topologie laden…");
     const topology = await loadTopology();
     renderOverview(topology);
+
+    setFooterStatus("Grafieken laden…");
+    await loadCharts().catch((err) => {
+      console.error("charts", err);
+      setFooterStatus(`Grafieken: ${err.message}`);
+    });
     setFooterStatus(
       `Bijgewerkt ${new Date().toLocaleString()} · collector: long-poll events + ${document.body.dataset.sampleInterval || "60"}s samples`
     );
-    await chartsPromise;
   } catch (err) {
     setFooterStatus(err.message);
     console.error(err);

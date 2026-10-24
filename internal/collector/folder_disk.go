@@ -13,7 +13,30 @@ import (
 
 const diskProbeInterval = time.Hour
 
+func (c *Collector) pruneFolderDiskSamples(ctx context.Context, inst pbstore.Instance, folders []syncthing.FolderConfig) {
+	keep := make([]string, 0, len(folders))
+	for _, f := range folders {
+		if f.ID != "" {
+			keep = append(keep, f.ID)
+		}
+	}
+	n, err := c.store.DeleteFolderDiskSamplesExcept(ctx, inst.ID, keep)
+	if err != nil {
+		log.Printf("collector: folder disk prune %s: %v", inst.Name, err)
+	} else if n > 0 {
+		log.Printf("collector: folder disk prune %s: removed %d samples for deleted folders", inst.Name, n)
+	}
+}
+
 func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance, client *syncthing.Client, recorded string) {
+	folders, err := client.ConfigFolders(ctx)
+	if err != nil {
+		log.Printf("collector: disk probe %s folders: %v", inst.Name, err)
+		return
+	}
+
+	c.pruneFolderDiskSamples(ctx, inst, folders)
+
 	c.mu.Lock()
 	hasData := c.diskProbeHasData[inst.ID]
 	lastProbe := c.lastDiskProbeAt[inst.ID]
@@ -34,11 +57,6 @@ func (c *Collector) sampleFolderDisk(ctx context.Context, inst pbstore.Instance,
 	home := ""
 	if st != nil {
 		home = st.Tilde
-	}
-	folders, err := client.ConfigFolders(ctx)
-	if err != nil {
-		log.Printf("collector: disk probe %s folders: %v", inst.Name, err)
-		return
 	}
 
 	var query []probeclient.QueryItem
